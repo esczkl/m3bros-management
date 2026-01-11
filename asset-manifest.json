@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/esczkl.github.io/m3bros-management/static/css/main.e6c13ad2.css",
+    "main.js": "/esczkl.github.io/m3bros-management/static/js/main.dc7129b5.js",
+    "static/js/453.c43b8329.chunk.js": "/esczkl.github.io/m3bros-management/static/js/453.c43b8329.chunk.js",
+    "index.html": "/esczkl.github.io/m3bros-management/index.html",
+    "main.e6c13ad2.css.map": "/esczkl.github.io/m3bros-management/static/css/main.e6c13ad2.css.map",
+    "main.dc7129b5.js.map": "/esczkl.github.io/m3bros-management/static/js/main.dc7129b5.js.map",
+    "453.c43b8329.chunk.js.map": "/esczkl.github.io/m3bros-management/static/js/453.c43b8329.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.e6c13ad2.css",
+    "static/js/main.dc7129b5.js"
+  ]
+}
