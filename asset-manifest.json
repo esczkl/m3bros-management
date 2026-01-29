@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/m3bros-management/static/css/main.9c7d7d1b.css",
-    "main.js": "/m3bros-management/static/js/main.233b2741.js",
-    "static/js/453.75c4887e.chunk.js": "/m3bros-management/static/js/453.75c4887e.chunk.js",
+    "main.css": "/m3bros-management/static/css/main.07f72ac7.css",
+    "main.js": "/m3bros-management/static/js/main.0d13552e.js",
+    "static/js/453.e6f18da7.chunk.js": "/m3bros-management/static/js/453.e6f18da7.chunk.js",
     "index.html": "/m3bros-management/index.html",
-    "main.9c7d7d1b.css.map": "/m3bros-management/static/css/main.9c7d7d1b.css.map",
-    "main.233b2741.js.map": "/m3bros-management/static/js/main.233b2741.js.map",
-    "453.75c4887e.chunk.js.map": "/m3bros-management/static/js/453.75c4887e.chunk.js.map"
+    "main.07f72ac7.css.map": "/m3bros-management/static/css/main.07f72ac7.css.map",
+    "main.0d13552e.js.map": "/m3bros-management/static/js/main.0d13552e.js.map",
+    "453.e6f18da7.chunk.js.map": "/m3bros-management/static/js/453.e6f18da7.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.9c7d7d1b.css",
-    "static/js/main.233b2741.js"
+    "static/css/main.07f72ac7.css",
+    "static/js/main.0d13552e.js"
   ]
 }
