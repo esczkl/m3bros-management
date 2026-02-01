@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Users, DollarSign, TrendingUp, Calendar, LogOut, Plus, Trash2, Package, UserCheck, Shield, Edit2, Save, X, Database, UserPlus, Key, Download, Edit3, Minus } from 'lucide-react';
+import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V1.3] - COMPLETE MERGED RELEASE
-//  Features: All V1.2 features + Inventory Categories, 
-//  Custom Units, Edit Items, Branch Export, Password Fix
+// [CHECKPOINT V2.2] - INVENTORY CONSUMPTION LOGIC & MONTHLY VIEW
+//  Version: 2.2 | Minus button = consumption only (no price deduction), Added Monthly view
 // ============================================================
 
 const BRANCHES = {
@@ -122,12 +123,6 @@ const BRANCHES = {
   }
 };
 
-const DEFAULT_USERS = {
-  admin: { id: 'admin', username: 'admin', password: 'admin@m3bros2024', role: 'admin', name: 'System Administrator', createdAt: new Date().toISOString() },
-  manager: { id: 'manager', username: 'manager', password: 'manager123', role: 'manager', name: 'Branch Manager', createdAt: new Date().toISOString() },
-  owner: { id: 'owner', username: 'owner', password: 'owner123', role: 'owner', name: 'Business Owner', createdAt: new Date().toISOString() }
-};
-
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 const PAYMENT_MODES = ['Cash', 'GCash', 'BDO', 'BPI', 'PayMaya'];
 const EXPENSE_CATEGORIES = [
@@ -140,23 +135,30 @@ const EXPENSE_CATEGORIES = [
 const UNIT_OPTIONS = ['pcs', 'bottles', 'boxes', 'liters', 'packs', 'sachets', 'sheets', 'sets', 'other'];
 
 export default function App() {
-  const [users, setUsers] = useState(DEFAULT_USERS);
   const [user, setUser] = useState(null);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [userRole, setUserRole] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [currentView, setCurrentView] = useState('summary');
+
+  const today = new Date();
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+
   const [dateRange, setDateRange] = useState({
-    start: new Date().toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0]
+    start: firstDayOfMonth.toISOString().split('T')[0],
+    end: today.toISOString().split('T')[0]
   });
-  
+
   const [transactions, setTransactions] = useState({ elite: [], arellano: [], typeC: [] });
-  const [expenses, setExpenses] = useState([]);
   const [inventory, setInventory] = useState([]);
+  const [inventoryLogs, setInventoryLogs] = useState([]);
   const [attendance, setAttendance] = useState([]);
-  const [editingInventory, setEditingInventory] = useState(null);
+  const [usersList, setUsersList] = useState([]);
   const [exportBranch, setExportBranch] = useState('all');
   const [customStaff, setCustomStaff] = useState('');
-  
+  const [editingInventory, setEditingInventory] = useState(null);
+  const [editingTransaction, setEditingTransaction] = useState(null);
+
   const [newTransaction, setNewTransaction] = useState({
     branch: 'elite',
     serviceType: 'Barber',
@@ -200,11 +202,90 @@ export default function App() {
 
   const [adminTab, setAdminTab] = useState('users');
   const [editingUser, setEditingUser] = useState(null);
-  const [newUser, setNewUser] = useState({ username: '', password: '', name: '', role: 'manager' });
+  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'manager' });
   const [showAddUser, setShowAddUser] = useState(false);
 
-  const canManage = user && (user.role === 'admin' || user.role === 'manager');
-  const isAdmin = user && user.role === 'admin';
+  useEffect(() => {
+    const unsubscribe = onAuthChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        if (userDoc.exists()) {
+          setUser({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+            ...userDoc.data()
+          });
+          setUserRole(userDoc.data().role);
+        } else {
+          await setDoc(doc(db, 'users', firebaseUser.uid), {
+            email: firebaseUser.email,
+            role: 'manager',
+            name: firebaseUser.email.split('@')[0],
+            createdAt: new Date().toISOString()
+          });
+          setUser({ uid: firebaseUser.uid, email: firebaseUser.email, role: 'manager' });
+          setUserRole('manager');
+        }
+      } else {
+        setUser(null);
+        setUserRole(null);
+        setCurrentView('summary');
+        setTransactions({ elite: [], arellano: [], typeC: [] });
+        setInventory([]);
+        setInventoryLogs([]);
+        setAttendance([]);
+        setUsersList([]);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const txsQuery = query(collection(db, 'transactions'), orderBy('timestamp', 'desc'));
+    const unsubTxs = onSnapshot(txsQuery, (snapshot) => {
+      const txs = { elite: [], arellano: [], typeC: [] };
+      snapshot.docs.forEach(doc => {
+        const data = { id: doc.id, ...doc.data() };
+        if (txs[data.branch]) txs[data.branch].push(data);
+      });
+      setTransactions(txs);
+    });
+
+    const invQuery = query(collection(db, 'inventory'), orderBy('timestamp', 'desc'));
+    const unsubInv = onSnapshot(invQuery, (snapshot) => {
+      setInventory(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const invLogsQuery = query(collection(db, 'inventoryLogs'), orderBy('timestamp', 'desc'));
+    const unsubInvLogs = onSnapshot(invLogsQuery, (snapshot) => {
+      setInventoryLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const attQuery = query(collection(db, 'attendance'), orderBy('date', 'desc'));
+    const unsubAtt = onSnapshot(attQuery, (snapshot) => {
+      setAttendance(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const usersQuery = query(collection(db, 'users'));
+    const unsubUsers = onSnapshot(usersQuery, (snapshot) => {
+      setUsersList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubTxs();
+      unsubInv();
+      unsubInvLogs();
+      unsubAtt();
+      unsubUsers();
+    };
+  }, [user]);
+
+  const canManage = userRole === 'admin' || userRole === 'manager';
+  const isAdmin = userRole === 'admin';
 
   const getDateRange = () => ({ start: dateRange.start, end: dateRange.end });
 
@@ -226,6 +307,14 @@ export default function App() {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
     setDateRange({ start: `${year}-${month}-16`, end: `${year}-${month}-${lastDay}` });
+  };
+
+  const setMonthlyRange = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
+    setDateRange({ start: `${year}-${month}-01`, end: `${year}-${month}-${lastDay}` });
   };
 
   const getCalendarDays = () => {
@@ -256,32 +345,12 @@ export default function App() {
     });
   };
 
-  const getAttendanceDateRange = () => {
-    if (attendanceTimeframe === 'custom') {
-      return { start: attendanceDateRange.start, end: attendanceDateRange.end };
-    }
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    if (attendanceTimeframe === 'daily') return { start: todayStr, end: todayStr };
-    if (attendanceTimeframe === 'weekly') {
-      const weekAgo = new Date(today);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      return { start: weekAgo.toISOString().split('T')[0], end: todayStr };
-    }
-    const monthAgo = new Date(today);
-    monthAgo.setMonth(monthAgo.getMonth() - 1);
-    return { start: monthAgo.toISOString().split('T')[0], end: todayStr };
-  };
-
-  const handleLogin = () => {
-    const foundUser = Object.values(users).find(
-      u => u.username === loginForm.username && u.password === loginForm.password
-    );
-    if (foundUser) {
-      setUser(foundUser);
-      setLoginForm({ username: '', password: '' });
-    } else {
-      alert('Invalid credentials');
+  const handleLogin = async () => {
+    try {
+      await loginUser(loginForm.email, loginForm.password);
+      setLoginForm({ email: '', password: '' });
+    } catch (error) {
+      alert('Invalid credentials: ' + error.message);
     }
   };
 
@@ -342,52 +411,72 @@ export default function App() {
     });
   };
 
-  const handleAddTransaction = () => {
+  const handleAddTransaction = async () => {
     const staffName = newTransaction.staff === 'freelancer' ? customStaff.trim() : newTransaction.staff;
     if (!newTransaction.service || !staffName) {
       alert('Please fill in all fields including staff selection');
       return;
     }
 
-    const transaction = {
-      ...newTransaction,
-      staff: staffName,
-      id: Date.now(),
-      timestamp: new Date().toISOString()
-    };
-
-    setTransactions({
-      ...transactions,
-      [newTransaction.branch]: [...transactions[newTransaction.branch], transaction]
-    });
-
-    const branch = BRANCHES[newTransaction.branch];
-    const categories = Object.keys(branch.services[newTransaction.serviceType] || {});
-    setNewTransaction({
-      branch: newTransaction.branch,
-      serviceType: newTransaction.serviceType,
-      category: categories[0] || '',
-      service: '',
-      staff: '',
-      price: 0,
-      managementCut: 0,
-      staffCut: 0,
-      paymentMode: 'Cash',
-      date: new Date().toISOString().split('T')[0]
-    });
-    setCustomStaff('');
-  };
-
-  const handleDeleteTransaction = (branchKey, transactionId) => {
-    if (window.confirm('Delete this transaction?')) {
-      setTransactions({
-        ...transactions,
-        [branchKey]: transactions[branchKey].filter(t => t.id !== transactionId)
+    try {
+      await addDoc(collection(db, 'transactions'), {
+        ...newTransaction,
+        staff: staffName,
+        timestamp: new Date().toISOString(),
+        createdBy: user.uid
       });
+
+      const branch = BRANCHES[newTransaction.branch];
+      const categories = Object.keys(branch.services[newTransaction.serviceType] || {});
+      setNewTransaction({
+        branch: newTransaction.branch,
+        serviceType: newTransaction.serviceType,
+        category: categories[0] || '',
+        service: '',
+        staff: '',
+        price: 0,
+        managementCut: 0,
+        staffCut: 0,
+        paymentMode: 'Cash',
+        date: new Date().toISOString().split('T')[0]
+      });
+      setCustomStaff('');
+    } catch (error) {
+      alert('Error saving transaction: ' + error.message);
     }
   };
 
-  const handleAddInventory = () => {
+  const handleDeleteTransaction = async (branchKey, transactionId) => {
+    if (!canManage) {
+      alert('You do not have permission to delete transactions');
+      return;
+    }
+    if (window.confirm('Delete this transaction?')) {
+      try {
+        await deleteDoc(doc(db, 'transactions', transactionId));
+      } catch (error) {
+        alert('Error deleting: ' + error.message);
+      }
+    }
+  };
+
+  const handleUpdateTransaction = async (transactionId, updatedData) => {
+    if (!canManage) {
+      alert('You do not have permission to update transactions');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'transactions', transactionId), {
+        ...updatedData,
+        lastUpdated: new Date().toISOString()
+      });
+      setEditingTransaction(null);
+    } catch (error) {
+      alert('Error updating: ' + error.message);
+    }
+  };
+
+  const handleAddInventory = async () => {
     if (!newInventoryItem.name) {
       alert('Please enter item name');
       return;
@@ -406,168 +495,313 @@ export default function App() {
     }
 
     const finalUnit = newInventoryItem.unit === 'other' ? newInventoryItem.customUnit : newInventoryItem.unit;
-    const finalCategory = newInventoryItem.category === 'misc' && newInventoryItem.customCategory 
-      ? `misc: ${newInventoryItem.customCategory}` 
+    const finalCategory = newInventoryItem.category === 'misc' && newInventoryItem.customCategory
+      ? `misc: ${newInventoryItem.customCategory}`
       : newInventoryItem.category;
 
-    const inventoryItem = { 
-      ...newInventoryItem, 
-      id: Date.now(),
-      unit: finalUnit,
-      category: finalCategory
-    };
-    
-    setInventory([...inventory, inventoryItem]);
-    
-    const expense = {
-      id: Date.now(),
-      branch: newInventoryItem.branch,
-      item: newInventoryItem.name,
-      category: finalCategory,
-      quantity: newInventoryItem.quantity,
-      price: newInventoryItem.price,
-      totalCost: newInventoryItem.price * newInventoryItem.quantity,
-      date: newInventoryItem.purchaseDate,
-      timestamp: new Date().toISOString()
-    };
-    setExpenses([...expenses, expense]);
-    
-    setNewInventoryItem({ 
-      name: '', 
-      quantity: 0, 
-      price: 0, 
-      unit: 'pcs', 
-      customUnit: '',
-      branch: 'elite',
-      category: 'inventory',
-      customCategory: '',
-      purchaseDate: new Date().toISOString().split('T')[0]
-    });
+    try {
+      const itemRef = await addDoc(collection(db, 'inventory'), {
+        name: newInventoryItem.name,
+        quantity: newInventoryItem.quantity,
+        price: newInventoryItem.price,
+        unit: finalUnit,
+        branch: newInventoryItem.branch,
+        category: finalCategory,
+        purchaseDate: newInventoryItem.purchaseDate,
+        timestamp: new Date().toISOString(),
+        createdBy: user.uid
+      });
+
+      const totalCost = newInventoryItem.quantity * newInventoryItem.price;
+      await addDoc(collection(db, 'inventoryLogs'), {
+        action: 'create',
+        itemId: itemRef.id,
+        itemName: newInventoryItem.name,
+        quantity: newInventoryItem.quantity,
+        unit: finalUnit,
+        unitPrice: newInventoryItem.price,
+        totalAmount: totalCost,
+        branch: newInventoryItem.branch,
+        category: finalCategory,
+        date: newInventoryItem.purchaseDate,
+        timestamp: new Date().toISOString(),
+        userId: user.uid,
+        userName: user.name || user.email,
+        financialImpact: `Expense increased by PHP ${totalCost.toFixed(2)}`,
+        notes: `New inventory added: ${newInventoryItem.quantity} ${finalUnit}`
+      });
+
+      setNewInventoryItem({
+        name: '',
+        quantity: 0,
+        price: 0,
+        unit: 'pcs',
+        customUnit: '',
+        branch: 'elite',
+        category: 'inventory',
+        customCategory: '',
+        purchaseDate: new Date().toISOString().split('T')[0]
+      });
+    } catch (error) {
+      alert('Error adding inventory: ' + error.message);
+    }
   };
 
-  const handleUpdateInventory = (id, quantity) => {
+  const handleUpdateInventory = async (id, quantityChange) => {
+    if (!canManage) {
+      alert('Permission denied');
+      return;
+    }
     const item = inventory.find(i => i.id === id);
     if (!item) return;
-    const newQuantity = item.quantity + quantity;
+    const newQuantity = item.quantity + quantityChange;
     if (newQuantity < 0) {
       alert('Quantity cannot be negative');
       return;
     }
-    setInventory(inventory.map(item => item.id === id ? { ...item, quantity: newQuantity } : item));
+
+    try {
+      await updateDoc(doc(db, 'inventory', id), {
+        quantity: newQuantity,
+        lastUpdated: new Date().toISOString()
+      });
+
+      const action = quantityChange > 0 ? 'increase' : 'decrease';
+
+      // Prepare log data
+      const logData = {
+        action: action,
+        itemId: id,
+        itemName: item.name,
+        quantityChange: Math.abs(quantityChange),
+        newQuantity: newQuantity,
+        unit: item.unit,
+        branch: item.branch,
+        unitPrice: item.price,
+        date: new Date().toISOString().split('T')[0],
+        timestamp: new Date().toISOString(),
+        userId: user.uid,
+        userName: user.name || user.email,
+      };
+
+      if (action === 'increase') {
+        const changeValue = Math.abs(quantityChange) * item.price;
+        logData.totalAmount = changeValue;
+        logData.financialImpact = `Added PHP ${changeValue.toFixed(2)} to inventory value`;
+        logData.notes = `Stock increased by ${Math.abs(quantityChange)} ${item.unit}`;
+      } else {
+        // DECREASE: No financial impact - item is being consumed/used, not returned for refund
+        logData.totalAmount = 0;
+        logData.financialImpact = 'No financial impact - item consumed/used';
+        logData.notes = `Stock decreased by ${Math.abs(quantityChange)} ${item.unit} (consumption)`;
+      }
+
+      await addDoc(collection(db, 'inventoryLogs'), logData);
+    } catch (error) {
+      alert('Error updating: ' + error.message);
+    }
   };
 
-  const handleDeleteInventory = (id) => {
-    if (window.confirm('Delete this item?')) {
-      setInventory(inventory.filter(item => item.id !== id));
+  const handleDeleteInventory = async (id) => {
+    if (!canManage) {
+      alert('Permission denied');
+      return;
+    }
+    const item = inventory.find(i => i.id === id);
+    if (!item) return;
+
+    if (window.confirm(`Delete ${item.name}? This will remove the item and all its history.`)) {
+      try {
+        const itemLogs = inventoryLogs.filter(log => log.itemId === id);
+        const batch = writeBatch(db);
+
+        itemLogs.forEach(log => {
+          const logRef = doc(db, 'inventoryLogs', log.id);
+          batch.delete(logRef);
+        });
+
+        const itemRef = doc(db, 'inventory', id);
+        batch.delete(itemRef);
+
+        await batch.commit();
+
+        alert(`${item.name} and ${itemLogs.length} related entries deleted.`);
+      } catch (error) {
+        alert('Error deleting: ' + error.message);
+      }
     }
   };
 
   const startEditInventory = (item) => {
+    if (!canManage) return;
     setEditingInventory({
       ...item,
       originalId: item.id
     });
   };
 
-  const saveEditInventory = () => {
-    if (!editingInventory.name) {
-      alert('Item name is required');
+  const saveEditInventory = async () => {
+    if (!canManage) {
+      alert('Permission denied');
       return;
     }
-    if (!editingInventory.unit) {
-      alert('Unit is required');
+    if (!editingInventory.name || !editingInventory.unit) {
+      alert('Name and unit are required');
       return;
     }
 
-    setInventory(inventory.map(item => 
-      item.id === editingInventory.originalId 
-        ? { ...item, name: editingInventory.name, unit: editingInventory.unit, category: editingInventory.category }
-        : item
-    ));
-    setEditingInventory(null);
+    try {
+      await updateDoc(doc(db, 'inventory', editingInventory.originalId), {
+        name: editingInventory.name,
+        unit: editingInventory.unit,
+        category: editingInventory.category,
+        lastUpdated: new Date().toISOString()
+      });
+
+      await addDoc(collection(db, 'inventoryLogs'), {
+        action: 'edit',
+        itemId: editingInventory.originalId,
+        itemName: editingInventory.name,
+        branch: editingInventory.branch,
+        date: new Date().toISOString().split('T')[0],
+        timestamp: new Date().toISOString(),
+        userId: user.uid,
+        userName: user.name || user.email,
+        financialImpact: 'No change',
+        notes: 'Item details modified'
+      });
+
+      setEditingInventory(null);
+    } catch (error) {
+      alert('Error saving: ' + error.message);
+    }
   };
 
   const cancelEditInventory = () => {
     setEditingInventory(null);
   };
 
-  const handleAddAttendance = () => {
-    if (!newAttendance.staff) { 
-      alert('Please select a staff member'); 
-      return; 
+  const handleAddAttendance = async () => {
+    if (!canManage) {
+      alert('Permission denied');
+      return;
+    }
+    if (!newAttendance.staff) {
+      alert('Please select a staff member');
+      return;
     }
     const exists = attendance.find(a => a.staff === newAttendance.staff && a.date === newAttendance.date);
-    if (exists) { 
-      alert('This staff member already has an attendance entry for this date'); 
-      return; 
+    if (exists) {
+      alert('This staff member already has an attendance entry for this date');
+      return;
     }
-    
-    setAttendance([...attendance, { ...newAttendance, id: Date.now() }]);
-    setNewAttendance({
-      staff: newAttendance.staff,
-      branch: newAttendance.branch,
-      status: 'present',
-      date: new Date().toISOString().split('T')[0]
-    });
+
+    try {
+      await addDoc(collection(db, 'attendance'), {
+        ...newAttendance,
+        timestamp: new Date().toISOString(),
+        createdBy: user.uid
+      });
+      setNewAttendance({
+        staff: newAttendance.staff,
+        branch: newAttendance.branch,
+        status: 'present',
+        date: new Date().toISOString().split('T')[0]
+      });
+    } catch (error) {
+      alert('Error logging attendance: ' + error.message);
+    }
   };
 
-  const handleDeleteAttendance = (id) => {
+  const handleDeleteAttendance = async (id) => {
+    if (!canManage) {
+      alert('Permission denied');
+      return;
+    }
     if (window.confirm('Remove this attendance record?')) {
-      setAttendance(attendance.filter(a => a.id !== id));
+      try {
+        await deleteDoc(doc(db, 'attendance', id));
+      } catch (error) {
+        alert('Error removing: ' + error.message);
+      }
     }
   };
 
-  const handleAddUser = () => {
-    if (!newUser.username || !newUser.password || !newUser.name) { 
-      alert('Fill all fields'); 
-      return; 
+  const handleAddUser = async () => {
+    if (!newUser.email || !newUser.name) {
+      alert('Fill all required fields');
+      return;
     }
-    if (Object.values(users).some(u => u.username === newUser.username)) { 
-      alert('Username exists'); 
-      return; 
+
+    try {
+      await setDoc(doc(db, 'users', 'pending_' + Date.now()), {
+        email: newUser.email,
+        name: newUser.name,
+        role: newUser.role,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        createdBy: user.uid
+      });
+      alert('User creation request submitted. Admin must create account in Firebase Console.');
+      setNewUser({ email: '', password: '', name: '', role: 'manager' });
+      setShowAddUser(false);
+    } catch (error) {
+      alert('Error: ' + error.message);
     }
-    const userId = 'user_' + Date.now();
-    setUsers({ ...users, [userId]: { ...newUser, id: userId, createdAt: new Date().toISOString() } });
-    setNewUser({ username: '', password: '', name: '', role: 'manager' });
-    setShowAddUser(false);
   };
 
-  const handleUpdateUser = (userId) => {
-    if (!editingUser.username || !editingUser.name) { 
-      alert('Username and name required'); 
-      return; 
+  const handleUpdateUser = async (userId) => {
+    if (!editingUser.name) {
+      alert('Name required');
+      return;
     }
-    const exists = Object.values(users).find(u => u.username === editingUser.username && u.id !== userId);
-    if (exists) { 
-      alert('Username exists'); 
-      return; 
+
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        name: editingUser.name,
+        role: editingUser.role,
+        updatedAt: new Date().toISOString()
+      });
+      setEditingUser(null);
+    } catch (error) {
+      alert('Error updating: ' + error.message);
     }
-    setUsers({ ...users, [userId]: { ...users[userId], ...editingUser } });
-    setEditingUser(null);
   };
 
-  const handleDeleteUser = (userId) => {
-    if (userId === 'admin') { 
-      alert('Cannot delete admin'); 
-      return; 
-    }
-    if (userId === user.id) { 
-      alert('Cannot delete yourself'); 
-      return; 
+  const handleDeleteUser = async (userId) => {
+    if (userId === user.uid) {
+      alert('Cannot delete yourself');
+      return;
     }
     if (window.confirm('Delete this user?')) {
-      const newUsers = { ...users };
-      delete newUsers[userId];
-      setUsers(newUsers);
+      try {
+        await deleteDoc(doc(db, 'users', userId));
+      } catch (error) {
+        alert('Error deleting: ' + error.message);
+      }
     }
   };
 
-  const handleResetPassword = (userId) => {
-    const newPassword = prompt('Enter new password:');
-    if (newPassword && newPassword.length >= 6) {
-      setUsers({ ...users, [userId]: { ...users[userId], password: newPassword } });
-      alert('Password reset successfully');
-    } else if (newPassword) alert('Min 6 characters');
+  const getBranchExpenses = (branchKey) => {
+    let expenses = 0;
+
+    const relevantLogs = branchKey === 'all'
+      ? inventoryLogs
+      : inventoryLogs.filter(log => log.branch === branchKey);
+
+    relevantLogs.forEach(log => {
+      if (log.date >= dateRange.start && log.date <= dateRange.end) {
+        // Only count purchases (create) and restocks (increase) as expenses
+        // Decreases are consumption (using the item), not financial reversals
+        if (log.action === 'create' || log.action === 'increase') {
+          expenses += log.totalAmount || 0;
+        }
+        // Note: We no longer subtract for 'decrease' actions since consuming
+        // inventory doesn't return money to the business
+      }
+    });
+
+    return expenses;
   };
 
   const getBranchStats = (branchKey) => {
@@ -575,8 +809,8 @@ export default function App() {
     const branchTransactions = transactions[branchKey].filter(t => t.date >= start && t.date <= end);
     const totalIncome = branchTransactions.reduce((sum, t) => sum + t.price, 0);
     const totalManagementFromTransactions = branchTransactions.reduce((sum, t) => sum + t.managementCut, 0);
-    const totalInventoryCost = inventory.filter(i => i.branch === branchKey).reduce((sum, i) => sum + (i.quantity * i.price), 0);
-    
+    const totalInventoryCost = getBranchExpenses(branchKey);
+
     return {
       totalIncome,
       totalExpenses: totalInventoryCost,
@@ -590,7 +824,7 @@ export default function App() {
     const allStats = Object.keys(BRANCHES).map(key => getBranchStats(key));
     return {
       totalIncome: allStats.reduce((sum, s) => sum + s.totalIncome, 0),
-      totalExpenses: allStats.reduce((sum, s) => s.totalExpenses, 0),
+      totalExpenses: allStats.reduce((sum, s) => sum + s.totalExpenses, 0),
       totalManagementCut: allStats.reduce((sum, s) => sum + s.totalManagementCut, 0),
       totalStaffCut: allStats.reduce((sum, s) => sum + s.totalStaffCut, 0),
       transactionCount: allStats.reduce((sum, s) => sum + s.transactionCount, 0)
@@ -614,68 +848,67 @@ export default function App() {
     const { start, end } = getDateRange();
     const isAllBranches = exportBranch === 'all';
     const targetBranch = exportBranch;
-    
+
     let relevantTransactions = [];
     if (isAllBranches) {
       relevantTransactions = Object.values(transactions).flat().filter(t => t.date >= start && t.date <= end);
     } else {
       relevantTransactions = transactions[targetBranch].filter(t => t.date >= start && t.date <= end);
     }
-    
+
     const stats = isAllBranches ? getSummaryStats() : getBranchStats(targetBranch);
-    
-    const relevantExpenses = isAllBranches 
-      ? expenses.filter(e => e.date >= start && e.date <= end)
-      : expenses.filter(e => e.branch === targetBranch && e.date >= start && e.date <= end);
+    const relevantExpenses = isAllBranches
+      ? inventoryLogs.filter(i => i.date >= start && i.date <= end)
+      : inventoryLogs.filter(i => i.branch === targetBranch && i.date >= start && i.date <= end);
 
     let report = 'M3 BROS BARBERSHOP SYSTEM REPORT\n';
     report += '================================\n';
     report += `Report Type: ${isAllBranches ? 'All Branches' : BRANCHES[targetBranch].name}\n`;
     report += `Period: ${start} to ${end}\n`;
     report += `Generated: ${new Date().toLocaleString()}\n\n`;
-    
+
     report += 'SUMMARY\n';
     report += `Gross Income: PHP ${stats.totalIncome.toFixed(2)}\n`;
     report += `Management Net: PHP ${stats.totalManagementCut.toFixed(2)}\n`;
     report += `Staff Commission: PHP ${stats.totalStaffCut.toFixed(2)}\n`;
     report += `Total Expenses: PHP ${stats.totalExpenses.toFixed(2)}\n`;
     report += `Transactions: ${stats.transactionCount}\n\n`;
-    
-    report += 'EXPENSES BREAKDOWN\n';
+
+    report += 'INVENTORY/EXPENSES LEDGER\n';
+    report += 'Date | Item | Action | Qty | Value | User\n';
+    report += '----------------------------------------\n';
+
     if (relevantExpenses.length > 0) {
       relevantExpenses.forEach(e => {
-        const catLabel = e.category.startsWith('misc:') ? e.category.replace('misc:', 'Misc:') : e.category;
-        report += `${e.date} | ${catLabel} | ${e.item} | ${e.quantity} | PHP ${e.totalCost.toFixed(2)}\n`;
+        const value = e.totalAmount ? `PHP ${e.totalAmount.toFixed(2)}` : '-';
+        report += `${e.date} | ${e.itemName} | ${e.action} | ${e.quantityChange || e.quantity} ${e.unit} | ${value} | ${e.userName}\n`;
       });
     } else {
-      report += 'No expenses recorded for this period\n';
-    }
-    report += `\nTotal: PHP ${relevantExpenses.reduce((sum, e) => sum + e.totalCost, 0).toFixed(2)}\n\n`;
-    
-    report += 'TRANSACTION DETAILS\n';
-    report += 'Date/Time | Branch | Service | Staff | Price | Payment | Mgmt | Staff\n';
-    report += '------------------------------------------------------------------------\n';
-    
-    if (relevantTransactions.length > 0) {
-      relevantTransactions.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp)).forEach(t => {
-        report += `${new Date(t.timestamp).toLocaleString()} | ${BRANCHES[t.branch].name} | ${t.service} | ${t.staff} | ${t.price.toFixed(2)} | ${t.paymentMode} | ${t.managementCut.toFixed(2)} | ${t.staffCut.toFixed(2)}\n`;
-      });
-    } else {
-      report += 'No transactions for selected period\n';
+      report += 'No expenses recorded\n';
     }
 
     const blob = new Blob([report], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const filename = isAllBranches 
+    const filename = isAllBranches
       ? `M3Bros_AllBranches_${start}_to_${end}.txt`
       : `M3Bros_${targetBranch}_${start}_to_${end}.txt`;
     a.download = filename;
     a.click();
+    URL.revokeObjectURL(url);
   };
 
-  // --- RENDER COMPONENTS ---
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading M3 Bros System...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -683,18 +916,19 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V1.3</p>
+            <p className="text-gray-600">Management System V2.2</p>
+            <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
               <input
-                type="text"
-                value={loginForm.username}
-                onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })}
+                type="email"
+                value={loginForm.email}
+                onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter username"
+                placeholder="admin@m3bros.com"
               />
             </div>
             <div>
@@ -704,7 +938,6 @@ export default function App() {
                 value={loginForm.password}
                 onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                /* [CHECKPOINT V1.3] - Prevents Chrome password warning */
                 autoComplete="new-password"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter password"
@@ -718,7 +951,8 @@ export default function App() {
             </button>
           </div>
           <div className="mt-6 text-xs text-gray-500 text-center">
-            <p>Authorized Personnel Only • V1.3</p>
+            <p>Authorized Personnel Only • Firebase Secured</p>
+            <p className="mt-2 text-yellow-600">First login: Check with admin for credentials</p>
           </div>
         </div>
       </div>
@@ -743,11 +977,11 @@ export default function App() {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-800">Inventory & Expenses</h2>
-        
+
         {canManage && (
           <div className="bg-white rounded-lg shadow p-6 space-y-4">
             <h3 className="text-lg font-semibold">Add New Item / Expense</h3>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
               <select
@@ -785,7 +1019,7 @@ export default function App() {
                   className="w-full px-3 py-2 border rounded-lg"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
                 <select
@@ -876,7 +1110,7 @@ export default function App() {
             <h3 className="text-lg font-semibold">Current Inventory & Expenses</h3>
             <span className="text-sm text-gray-500">{inventory.length} items</span>
           </div>
-          
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
@@ -899,7 +1133,7 @@ export default function App() {
                         <td className="px-4 py-2">
                           <select
                             value={editingInventory.category}
-                            onChange={(e) => setEditingInventory({...editingInventory, category: e.target.value})}
+                            onChange={(e) => setEditingInventory({ ...editingInventory, category: e.target.value })}
                             className="w-full px-2 py-1 border rounded text-sm"
                           >
                             {EXPENSE_CATEGORIES.map(cat => (
@@ -911,7 +1145,7 @@ export default function App() {
                           <input
                             type="text"
                             value={editingInventory.name}
-                            onChange={(e) => setEditingInventory({...editingInventory, name: e.target.value})}
+                            onChange={(e) => setEditingInventory({ ...editingInventory, name: e.target.value })}
                             className="w-full px-2 py-1 border rounded text-sm"
                           />
                         </td>
@@ -920,7 +1154,7 @@ export default function App() {
                           <input
                             type="text"
                             value={editingInventory.unit}
-                            onChange={(e) => setEditingInventory({...editingInventory, unit: e.target.value})}
+                            onChange={(e) => setEditingInventory({ ...editingInventory, unit: e.target.value })}
                             className="w-20 px-2 py-1 border rounded text-sm"
                           />
                         </td>
@@ -941,15 +1175,14 @@ export default function App() {
                     ) : (
                       <>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs ${
-                            item.category === 'inventory' ? 'bg-blue-100 text-blue-800' :
-                            item.category === 'utilities' ? 'bg-yellow-100 text-yellow-800' :
-                            item.category === 'rent' ? 'bg-purple-100 text-purple-800' :
-                            item.category?.startsWith('misc') ? 'bg-gray-100 text-gray-800' :
-                            'bg-green-100 text-green-800'
-                          }`}>
-                            {item.category?.startsWith('misc:') ? item.category.replace('misc:', '') : 
-                             EXPENSE_CATEGORIES.find(c => c.value === item.category)?.label || item.category}
+                          <span className={`px-2 py-1 rounded-full text-xs ${item.category === 'inventory' ? 'bg-blue-100 text-blue-800' :
+                              item.category === 'utilities' ? 'bg-yellow-100 text-yellow-800' :
+                                item.category === 'rent' ? 'bg-purple-100 text-purple-800' :
+                                  item.category?.startsWith('misc') ? 'bg-gray-100 text-gray-800' :
+                                    'bg-green-100 text-green-800'
+                            }`}>
+                            {item.category?.startsWith('misc:') ? item.category.replace('misc:', '') :
+                              EXPENSE_CATEGORIES.find(c => c.value === item.category)?.label || item.category}
                           </span>
                         </td>
                         <td className="px-4 py-3 font-medium">{item.name}</td>
@@ -963,32 +1196,32 @@ export default function App() {
                         {canManage && (
                           <td className="px-4 py-3">
                             <div className="flex justify-center gap-1">
-                              <button 
-                                onClick={() => handleUpdateInventory(item.id, 1)} 
+                              <button
+                                onClick={() => handleUpdateInventory(item.id, 1)}
                                 className="p-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
                                 title="Increase"
                               >
                                 <Plus className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => handleUpdateInventory(item.id, -1)} 
+                              <button
+                                onClick={() => handleUpdateInventory(item.id, -1)}
                                 className="p-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200"
-                                title="Decrease"
+                                title="Decrease (Consumption)"
                                 disabled={item.quantity <= 0}
                               >
                                 <Minus className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => startEditInventory(item)} 
+                              <button
+                                onClick={() => startEditInventory(item)}
                                 className="p-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
                                 title="Edit"
                               >
                                 <Edit3 className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => handleDeleteInventory(item.id)} 
+                              <button
+                                onClick={() => handleDeleteInventory(item.id)}
                                 className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
-                                title="Delete"
+                                title="Delete All History"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1034,7 +1267,7 @@ export default function App() {
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-800">Add Transaction</h2>
-        
+
         <div className="bg-white rounded-lg shadow p-6 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
@@ -1080,7 +1313,7 @@ export default function App() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Payment Mode</label>
               <select
                 value={newTransaction.paymentMode}
-                onChange={(e) => setNewTransaction({...newTransaction, paymentMode: e.target.value})}
+                onChange={(e) => setNewTransaction({ ...newTransaction, paymentMode: e.target.value })}
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
               >
                 {PAYMENT_MODES.map(mode => <option key={mode} value={mode}>{mode}</option>)}
@@ -1143,14 +1376,14 @@ export default function App() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Price {user.role === 'manager' && <span className="text-xs text-blue-600">(Editable)</span>}
+                Price {userRole === 'manager' && <span className="text-xs text-blue-600">(Editable)</span>}
               </label>
               <input
                 type="number"
                 value={newTransaction.price}
                 onChange={(e) => handlePriceChange(e.target.value)}
-                readOnly={user.role !== 'manager' && newTransaction.service}
-                className={`w-full px-3 py-2 border rounded-lg ${user.role === 'manager' ? 'bg-white border-blue-300' : 'bg-gray-100'}`}
+                readOnly={userRole !== 'manager' && newTransaction.service}
+                className={`w-full px-3 py-2 border rounded-lg ${userRole === 'manager' ? 'bg-white border-blue-300' : 'bg-gray-100'}`}
               />
             </div>
             <div>
@@ -1175,14 +1408,20 @@ export default function App() {
   };
 
   const renderAttendance = () => {
-    const { start, end } = getAttendanceDateRange();
+    const today = new Date().toISOString().split('T')[0];
+    const { start, end } = attendanceTimeframe === 'daily'
+      ? { start: today, end: today }
+      : attendanceTimeframe === 'weekly'
+        ? { start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today }
+        : { start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today };
+
     const filtered = attendance.filter(a => a.date >= start && a.date <= end);
     const calendarDays = getCalendarDays();
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const todayStr = new Date().toISOString().split('T')[0];
     const getAttendanceForDate = (d) => attendance.filter(a => a.date === d);
     const monthPrefix = `${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}`;
-    
+
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-800">Attendance Tracking</h2>
@@ -1265,7 +1504,7 @@ export default function App() {
                 <span className="font-bold text-lg">{getMonthName(calendarMonth.month)} {calendarMonth.year}</span>
                 <button onClick={() => navigateMonth(1)} className="px-4 py-2 bg-white rounded shadow hover:bg-gray-50">Next →</button>
               </div>
-              
+
               <div className="grid grid-cols-7 gap-1">
                 {dayNames.map(d => <div key={d} className="text-center text-sm font-semibold text-gray-500 py-2">{d}</div>)}
                 {calendarDays.map((dateStr, idx) => {
@@ -1335,17 +1574,94 @@ export default function App() {
     );
   };
 
+  const renderInventoryLogs = () => {
+    const recentLogs = inventoryLogs.slice(0, 100);
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <Package className="w-6 h-6 text-blue-600" />
+          <h2 className="text-2xl font-bold text-gray-800">Inventory Change Log</h2>
+        </div>
+
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b flex justify-between items-center bg-blue-50">
+            <h3 className="text-lg font-semibold text-blue-900">Recent Activity (Last 100 entries)</h3>
+            <span className="text-sm text-blue-700">{inventoryLogs.length} total records</span>
+          </div>
+
+          <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Action</th>
+                  <th className="px-4 py-3 text-left">Item</th>
+                  <th className="px-4 py-3 text-left">Branch</th>
+                  <th className="px-4 py-3 text-right">Qty/Value</th>
+                  <th className="px-4 py-3 text-left">Financial Impact</th>
+                  <th className="px-4 py-3 text-left">By</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {recentLogs.length > 0 ? recentLogs.map((log) => (
+                  <tr key={log.id} className={`hover:bg-gray-50 ${log.action === 'create' ? 'bg-green-50' :
+                      log.action === 'delete' ? 'bg-red-50' :
+                        'bg-yellow-50'
+                    }`}>
+                    <td className="px-4 py-3 text-xs whitespace-nowrap">
+                      {new Date(log.timestamp).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded-full text-xs font-bold ${log.action === 'create' ? 'bg-green-200 text-green-800' :
+                          log.action === 'delete' ? 'bg-red-200 text-red-800' :
+                            log.action === 'increase' ? 'bg-blue-200 text-blue-800' :
+                              'bg-orange-200 text-orange-800'
+                        }`}>
+                        {log.action === 'create' ? 'ADDED' :
+                          log.action === 'delete' ? 'DELETED' :
+                            log.action === 'increase' ? 'STOCK +' :
+                              'STOCK -'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 font-medium">{log.itemName}</td>
+                    <td className="px-4 py-3 text-xs">{BRANCHES[log.branch]?.name || log.branch}</td>
+                    <td className="px-4 py-3 text-right text-xs">
+                      {log.quantity} {log.unit}<br />
+                      {log.totalAmount > 0 && <span className="font-bold">PHP {log.totalAmount.toFixed(2)}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {log.financialImpact || '-'}
+                      {log.notes && <div className="text-gray-500 italic mt-1">{log.notes}</div>}
+                    </td>
+                    <td className="px-4 py-3 text-xs">{log.userName}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                      No inventory activity recorded yet
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderAdminPanel = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
         <Shield className="w-6 h-6 text-red-600" />
         <h2 className="text-2xl font-bold text-gray-800">Admin Panel</h2>
       </div>
-      
+
       <div className="bg-red-50 border border-red-200 rounded-lg p-4">
         <p className="text-sm text-red-800 flex items-center gap-2">
-          <Shield className="w-4 h-4" /> 
-          Create Manager and Owner accounts below
+          <Shield className="w-4 h-4" />
+          Manage users in Firebase Console Authentication for security
         </p>
       </div>
 
@@ -1356,40 +1672,34 @@ export default function App() {
         <button onClick={() => setAdminTab('data')} className={`px-4 py-2 rounded-lg text-sm font-medium ${adminTab === 'data' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>
           <Database className="w-4 h-4 inline mr-1" /> Database
         </button>
+        <button onClick={() => setAdminTab('inventory-logs')} className={`px-4 py-2 rounded-lg text-sm font-medium ${adminTab === 'inventory-logs' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>
+          <Package className="w-4 h-4 inline mr-1" /> Inventory Logs
+        </button>
       </div>
 
       {adminTab === 'users' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">System Users</h3>
+            <h3 className="text-lg font-semibold">System Users ({usersList.length})</h3>
             <button onClick={() => setShowAddUser(!showAddUser)} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm flex items-center gap-2">
-              <UserPlus className="w-4 h-4" /> Add User
+              <UserPlus className="w-4 h-4" /> Request New User
             </button>
           </div>
-          
+
           {showAddUser && (
             <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
-              <h4 className="font-semibold">Create New Account</h4>
+              <h4 className="font-semibold">Request New Account</h4>
+              <p className="text-xs text-gray-600">Admin must create the actual login in Firebase Console after submission</p>
               <div className="grid grid-cols-2 gap-3">
-                <input type="text" placeholder="Username" value={newUser.username} onChange={(e) => setNewUser({ ...newUser, username: e.target.value })} className="px-3 py-2 border rounded" />
-                /* [CHECKPOINT V1.3] - New password field without warning */
-                <input 
-                  type="password" 
-                  placeholder="Password" 
-                  value={newUser.password} 
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                  autoComplete="new-password"
-                  className="px-3 py-2 border rounded" 
-                />
+                <input type="email" placeholder="Email" value={newUser.email} onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} className="px-3 py-2 border rounded" />
                 <input type="text" placeholder="Full Name" value={newUser.name} onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} className="px-3 py-2 border rounded" />
                 <select value={newUser.role} onChange={(e) => setNewUser({ ...newUser, role: e.target.value })} className="px-3 py-2 border rounded">
                   <option value="manager">Manager</option>
                   <option value="owner">Owner</option>
-                  <option value="admin">Admin</option>
                 </select>
               </div>
               <div className="flex gap-2">
-                <button onClick={handleAddUser} className="px-4 py-2 bg-green-600 text-white rounded">Create Account</button>
+                <button onClick={handleAddUser} className="px-4 py-2 bg-green-600 text-white rounded">Submit Request</button>
                 <button onClick={() => setShowAddUser(false)} className="px-4 py-2 bg-gray-300 rounded">Cancel</button>
               </div>
             </div>
@@ -1400,16 +1710,16 @@ export default function App() {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left">Name</th>
-                  <th className="px-4 py-3 text-left">Username</th>
+                  <th className="px-4 py-3 text-left">Email</th>
                   <th className="px-4 py-3 text-left">Role</th>
                   <th className="px-4 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {Object.entries(users).map(([userId, userData]) => (
-                  <tr key={userId} className="hover:bg-gray-50">
+                {usersList.map((userData) => (
+                  <tr key={userData.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      {editingUser?.id === userId ? (
+                      {editingUser?.id === userData.id ? (
                         <input type="text" value={editingUser.name} onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })} className="w-full px-2 py-1 border rounded text-sm" />
                       ) : (
                         <span className="font-medium flex items-center gap-2">
@@ -1418,7 +1728,7 @@ export default function App() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{userData.username}</td>
+                    <td className="px-4 py-3 text-gray-600">{userData.email}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-1 rounded-full text-xs ${userData.role === 'admin' ? 'bg-red-100 text-red-800' : userData.role === 'manager' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
                         {userData.role}
@@ -1426,16 +1736,15 @@ export default function App() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
-                        {editingUser?.id === userId ? (
+                        {editingUser?.id === userData.id ? (
                           <>
-                            <button onClick={() => handleUpdateUser(userId)} className="p-1 text-green-600"><Save className="w-4 h-4" /></button>
+                            <button onClick={() => handleUpdateUser(userData.id)} className="p-1 text-green-600"><Save className="w-4 h-4" /></button>
                             <button onClick={() => setEditingUser(null)} className="p-1 text-gray-600"><X className="w-4 h-4" /></button>
                           </>
                         ) : (
                           <>
-                            <button onClick={() => setEditingUser({ ...userData, id: userId })} className="p-1 text-blue-600"><Edit2 className="w-4 h-4" /></button>
-                            <button onClick={() => handleResetPassword(userId)} className="p-1 text-yellow-600"><Key className="w-4 h-4" /></button>
-                            <button onClick={() => handleDeleteUser(userId)} className="p-1 text-red-600" disabled={userId === 'admin'}><Trash2 className="w-4 h-4" /></button>
+                            <button onClick={() => setEditingUser({ ...userData, id: userData.id })} className="p-1 text-blue-600"><Edit2 className="w-4 h-4" /></button>
+                            <button onClick={() => handleDeleteUser(userData.id)} className="p-1 text-red-600" disabled={userData.id === user?.uid}><Trash2 className="w-4 h-4" /></button>
                           </>
                         )}
                       </div>
@@ -1450,10 +1759,10 @@ export default function App() {
 
       {adminTab === 'data' && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Database Overview</h3>
+          <h3 className="text-lg font-semibold">Database Overview (Real-time)</h3>
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-white rounded-lg shadow p-4 text-center">
-              <p className="text-sm text-gray-500">Transactions</p>
+              <p className="text-sm text-gray-500">Total Transactions</p>
               <p className="text-2xl font-bold text-blue-600">{Object.values(transactions).flat().length}</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4 text-center">
@@ -1467,6 +1776,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {adminTab === 'inventory-logs' && renderInventoryLogs()}
     </div>
   );
 
@@ -1474,20 +1785,25 @@ export default function App() {
     const stats = branchKey === 'summary' ? getSummaryStats() : getBranchStats(branchKey);
     const branchName = branchKey === 'summary' ? 'All Branches Summary' : BRANCHES[branchKey].name;
     const { start, end } = getDateRange();
-    
-    const branchTransactions = branchKey === 'summary' 
+
+    const branchTransactions = branchKey === 'summary'
       ? Object.values(transactions).flat().filter(t => t.date >= start && t.date <= end)
       : transactions[branchKey].filter(t => t.date >= start && t.date <= end);
+
+    const branchExpenseLogs = branchKey === 'summary'
+      ? inventoryLogs.filter(l => l.date >= start && l.date <= end)
+      : inventoryLogs.filter(l => l.branch === branchKey && l.date >= start && l.date <= end);
 
     return (
       <div className="space-y-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <h2 className="text-2xl font-bold text-gray-800">{branchName}</h2>
-          
+
           <div className="flex flex-wrap gap-2 items-center">
             <button onClick={setDailyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Daily</button>
             <button onClick={setFirstHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">1st-15th</button>
             <button onClick={setSecondHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">16th-End</button>
+            <button onClick={setMonthlyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Monthly</button>
             <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="px-2 py-1 border rounded text-sm" />
             <span className="text-gray-600">to</span>
             <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="px-2 py-1 border rounded text-sm" />
@@ -1504,12 +1820,12 @@ export default function App() {
               <option value="typeC">Type C Branch</option>
             </select>
             <button onClick={generateReport} className="px-4 py-1 bg-green-600 text-white rounded hover:bg-green-700 flex items-center gap-2 text-sm">
-              <Download className="w-4 h-4" /> 
+              <Download className="w-4 h-4" />
               Export {exportBranch === 'all' ? 'All' : BRANCHES[exportBranch].name}
             </button>
           </div>
         )}
-        
+
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <DashboardCard title="Gross Income" value={`PHP ${stats.totalIncome.toLocaleString()}`} icon={DollarSign} color="bg-blue-500" />
           <DashboardCard title="Management Net" value={`PHP ${stats.totalManagementCut.toLocaleString()}`} icon={TrendingUp} color="bg-green-500" />
@@ -1520,13 +1836,13 @@ export default function App() {
 
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b">
-            <h3 className="text-lg font-semibold">Transactions</h3>
+            <h3 className="text-lg font-semibold">Recent Transactions</h3>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left">Date</th>
+                  <th className="px-4 py-2 text-left">Date/Time</th>
                   {branchKey === 'summary' && <th className="px-4 py-2 text-left">Branch</th>}
                   <th className="px-4 py-2 text-left">Service</th>
                   <th className="px-4 py-2 text-left">Staff</th>
@@ -1536,7 +1852,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {branchTransactions.slice(0, 50).reverse().map((t) => (
+                {branchTransactions.slice(0, 50).map((t) => (
                   <tr key={t.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 text-xs">{new Date(t.timestamp).toLocaleString()}</td>
                     {branchKey === 'summary' && <td className="px-4 py-2 text-xs">{BRANCHES[t.branch].name}</td>}
@@ -1546,7 +1862,7 @@ export default function App() {
                     <td className="px-4 py-2 text-right">PHP {t.price.toFixed(2)}</td>
                     {canManage && (
                       <td className="px-4 py-2 text-center">
-                        <button onClick={() => handleDeleteTransaction(t.branch, t.id)} className="text-red-600 hover:text-red-800">
+                        <button onClick={() => handleDeleteTransaction(t.branch, t.id)} className="text-red-600 hover:text-red-800 mx-1" title="Delete">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
@@ -1564,6 +1880,70 @@ export default function App() {
             </table>
           </div>
         </div>
+
+        <div className="bg-white rounded-lg shadow overflow-hidden mt-6">
+          <div className="px-6 py-4 border-b bg-red-50 flex justify-between items-center">
+            <h3 className="text-lg font-semibold text-red-900">
+              Expense Ledger ({branchExpenseLogs.length} entries)
+            </h3>
+            <span className="text-sm text-red-700 font-bold">
+              Total: PHP {branchExpenseLogs.reduce((sum, l) => {
+                if (l.action === 'create' || l.action === 'increase') return sum + (l.totalAmount || 0);
+                return sum;
+              }, 0).toLocaleString()}
+            </span>
+          </div>
+          <div className="overflow-x-auto max-h-80 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-4 py-2 text-left">Date</th>
+                  <th className="px-4 py-2 text-left">Item</th>
+                  <th className="px-4 py-2 text-left">Action</th>
+                  <th className="px-4 py-2 text-right">Qty</th>
+                  <th className="px-4 py-2 text-right">Amount</th>
+                  <th className="px-4 py-2 text-left">By</th>
+                  <th className="px-4 py-2 text-left">Financial Note</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {branchExpenseLogs.length > 0 ? branchExpenseLogs.map((log) => (
+                  <tr key={log.id} className={`hover:bg-gray-50 ${log.action === 'create' ? 'bg-red-50' :
+                      log.action === 'delete' ? 'bg-orange-50' : ''
+                    }`}>
+                    <td className="px-4 py-2 text-xs">{log.date}</td>
+                    <td className="px-4 py-2 font-medium">{log.itemName}</td>
+                    <td className="px-4 py-2">
+                      <span className={`text-xs px-2 py-1 rounded ${log.action === 'create' ? 'bg-green-200 text-green-800' :
+                          log.action === 'delete' ? 'bg-red-200 text-red-800' :
+                            log.action === 'increase' ? 'bg-blue-200 text-blue-800' :
+                              'bg-yellow-200 text-yellow-800'
+                        }`}>
+                        {log.action?.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">{log.quantityChange || log.quantity} {log.unit}</td>
+                    <td className="px-4 py-2 text-right font-bold">
+                      {(log.action === 'create' || log.action === 'increase') && log.totalAmount > 0 ? (
+                        <span className="text-green-600">+PHP {log.totalAmount.toFixed(2)}</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-xs">{log.userName}</td>
+                    <td className="px-4 py-2 text-xs text-gray-600">{log.financialImpact}</td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
+                      No inventory expenses for this period
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     );
   };
@@ -1574,17 +1954,26 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-gray-800">M3 Bros</h1>
-              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                user.role === 'admin' ? 'bg-red-100 text-red-800' : 
-                user.role === 'manager' ? 'bg-blue-100 text-blue-800' : 
-                'bg-green-100 text-green-800'
-              }`}>
-                {user.role === 'admin' ? 'Administrator' : user.role === 'manager' ? 'Manager' : 'Owner'}
+              <div className="flex flex-col">
+                <h1 className="text-xl font-bold text-gray-800">M3 Bros</h1>
+                <span className="text-xs text-blue-600 font-medium">
+                  Welcome, {user?.name || user?.email?.split('@')[0] || 'User'}
+                </span>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${userRole === 'admin' ? 'bg-red-100 text-red-800' :
+                  userRole === 'manager' ? 'bg-blue-100 text-blue-800' :
+                    'bg-green-100 text-green-800'
+                }`}>
+                {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v1.3</span>
+              <span className="text-xs text-gray-500">v2.2 ● Cloud</span>
             </div>
-            <button onClick={() => { setUser(null); setCurrentView('summary'); }} className="flex items-center gap-2 text-gray-700 hover:text-gray-900">
+            <button
+              onClick={async () => {
+                await logoutUser();
+              }}
+              className="flex items-center gap-2 text-gray-700 hover:text-gray-900"
+            >
               <LogOut className="w-5 h-5" />
               <span>Logout</span>
             </button>
@@ -1623,13 +2012,11 @@ export default function App() {
         </div>
 
         {currentView === 'admin' && isAdmin ? renderAdminPanel() :
-         currentView === 'transactions' && canManage ? renderTransactionForm() :
-         currentView === 'inventory' ? renderInventory() :
-         currentView === 'attendance' ? renderAttendance() :
-         renderDashboard(currentView)}
+          currentView === 'transactions' && canManage ? renderTransactionForm() :
+            currentView === 'inventory' ? renderInventory() :
+              currentView === 'attendance' ? renderAttendance() :
+                renderDashboard(currentView)}
       </div>
     </div>
   );
 }
-
-// [CHECKPOINT V1.3] - END OF COMPLETE APPLICATION

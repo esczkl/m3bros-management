@@ -1,12 +1,13 @@
 {
   "name": "m3bros-management-v1",
   "version": "1.2.0",
-  "homepage": "https://esczk1.github.io/m3bros-management",
+ "homepage": ".",
   "private": true,
   "dependencies": {
     "@testing-library/jest-dom": "^5.16.5",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
+    "firebase": "^12.8.0",
     "lucide-react": "^0.263.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -15,18 +16,25 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "predeploy": "npm run build",
-    "deploy": "gh-pages -d build --repo https://github.com/esczkl/m3bros-management.git"
-  },
+  "start": "react-scripts start",
+  "build": "set DISABLE_ESLINT_PLUGIN=true && react-scripts build",
+  "test": "react-scripts test",
+  "eject": "react-scripts eject"
+},
   "browserslist": {
-    "production": [">0.2%", "not dead", "not op_mini all"],
-    "development": ["last 1 chrome version", "last 1 firefox version", "last 1 safari version"]
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
   },
   "devDependencies": {
+    "eslint-plugin-react-hooks": "^7.0.1",
     "gh-pages": "^5.0.0"
   }
 }
