@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Users, DollarSign, TrendingUp, Calendar, LogOut, Plus, Trash2, Package, UserCheck, Shield, Edit2, Save, X, Database, UserPlus, Key, Download, Edit3, Minus } from 'lucide-react';
+import { Users, DollarSign, TrendingUp, Calendar, LogOut, Plus, Trash2, Package, UserCheck, Shield, Edit2, Save, X, Database, UserPlus, Key, Download, Edit3, Minus, Banknote, Smartphone, CreditCard, Scissors } from 'lucide-react';
 import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch, getDocs } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.2] - INVENTORY CONSUMPTION LOGIC & MONTHLY VIEW
-//  Version: 2.2 | Minus button = consumption only (no price deduction), Added Monthly view
+// [CHECKPOINT V2.3.2] - SERVICES PANEL SEPARATION
+//  Version: 2.3.2 | Separate Services panel, branch-specific types, edit fix
 // ============================================================
 
 const BRANCHES = {
@@ -205,6 +205,15 @@ export default function App() {
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'manager' });
   const [showAddUser, setShowAddUser] = useState(false);
 
+  // V2.3: Dynamic Services state
+  const [services, setServices] = useState({});
+  const [servicesTab, setServicesTab] = useState({ branch: 'elite', serviceType: 'Barber', category: '' });
+  const [newService, setNewService] = useState({ name: '', price: 0 });
+  const [newCategory, setNewCategory] = useState('');
+  const [editingService, setEditingService] = useState(null);
+  const [staffEarningsSort, setStaffEarningsSort] = useState({ field: 'total', asc: false });
+  const [staffSearchFilter, setStaffSearchFilter] = useState('');
+
   useEffect(() => {
     const unsubscribe = onAuthChange(async (firebaseUser) => {
       if (firebaseUser) {
@@ -275,17 +284,111 @@ export default function App() {
       setUsersList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    // V2.3: Services listener
+    const servicesQuery = query(collection(db, 'services'));
+    const unsubServices = onSnapshot(servicesQuery, (snapshot) => {
+      const servicesData = {};
+      snapshot.docs.forEach(docSnap => {
+        const data = { id: docSnap.id, ...docSnap.data() };
+        if (!servicesData[data.branch]) servicesData[data.branch] = {};
+        if (!servicesData[data.branch][data.serviceType]) {
+          servicesData[data.branch][data.serviceType] = {};
+        }
+        if (!servicesData[data.branch][data.serviceType][data.category]) {
+          servicesData[data.branch][data.serviceType][data.category] = [];
+        }
+        servicesData[data.branch][data.serviceType][data.category].push({
+          id: data.id,
+          name: data.serviceName,
+          price: data.price
+        });
+      });
+      setServices(servicesData);
+    });
+
     return () => {
       unsubTxs();
       unsubInv();
       unsubInvLogs();
       unsubAtt();
       unsubUsers();
+      unsubServices();
     };
   }, [user]);
 
   const canManage = userRole === 'admin' || userRole === 'manager';
   const isAdmin = userRole === 'admin';
+
+  // V2.3: Helper to get services (dynamic from Firestore or fallback to BRANCHES)
+  const getActiveServices = (branchKey) => {
+    if (services[branchKey] && Object.keys(services[branchKey]).length > 0) {
+      return services[branchKey];
+    }
+    return BRANCHES[branchKey]?.services || {};
+  };
+
+  // V2.3.1: Branch-specific Staff Earnings function
+  const getStaffEarnings = (branchKey) => {
+    const { start, end } = dateRange;
+    const branchTxs = branchKey === 'summary'
+      ? [...transactions.elite, ...transactions.arellano, ...transactions.typeC]
+      : transactions[branchKey] || [];
+    const filtered = branchTxs.filter(tx => tx.date >= start && tx.date <= end);
+    const earnings = {};
+
+    filtered.forEach(tx => {
+      if (!earnings[tx.staff]) {
+        earnings[tx.staff] = { name: tx.staff, total: 0, count: 0 };
+      }
+      earnings[tx.staff].total += tx.staffCut || 0;
+      earnings[tx.staff].count += 1;
+    });
+
+    // Filter by search and only show staff with transactions
+    let result = Object.values(earnings).filter(s => s.count > 0);
+
+    if (staffSearchFilter) {
+      result = result.filter(s => s.name.toLowerCase().includes(staffSearchFilter.toLowerCase()));
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      const aVal = staffEarningsSort.field === 'name' ? a.name :
+                   staffEarningsSort.field === 'count' ? a.count : a.total;
+      const bVal = staffEarningsSort.field === 'name' ? b.name :
+                   staffEarningsSort.field === 'count' ? b.count : b.total;
+      if (staffEarningsSort.field === 'name') {
+        return staffEarningsSort.asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return staffEarningsSort.asc ? aVal - bVal : bVal - aVal;
+    });
+
+    return result;
+  };
+
+  // V2.3: Memoized Payment Method Totals
+  const paymentMethodTotals = useMemo(() => {
+    const { start, end } = dateRange;
+    const allTxs = [...transactions.elite, ...transactions.arellano, ...transactions.typeC];
+    const filtered = allTxs.filter(tx => tx.date >= start && tx.date <= end);
+    const totals = {};
+
+    PAYMENT_MODES.forEach(mode => totals[mode] = 0);
+    filtered.forEach(tx => {
+      totals[tx.paymentMode] = (totals[tx.paymentMode] || 0) + tx.price;
+    });
+
+    return totals;
+  }, [transactions, dateRange]);
+
+  // V2.3: Payment method icons and colors
+  const paymentMethodConfig = {
+    Cash: { icon: Banknote, color: 'bg-green-500', textColor: 'text-green-600' },
+    GCash: { icon: Smartphone, color: 'bg-blue-500', textColor: 'text-blue-600' },
+    BDO: { icon: CreditCard, color: 'bg-orange-500', textColor: 'text-orange-600' },
+    BPI: { icon: CreditCard, color: 'bg-red-500', textColor: 'text-red-600' },
+    PayMaya: { icon: Smartphone, color: 'bg-purple-500', textColor: 'text-purple-600' }
+  };
 
   const getDateRange = () => ({ start: dateRange.start, end: dateRange.end });
 
@@ -315,6 +418,15 @@ export default function App() {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
     setDateRange({ start: `${year}-${month}-01`, end: `${year}-${month}-${lastDay}` });
+  };
+
+  // V2.3.1: Current Month button (1st of month to today)
+  const setCurrentMonthRange = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const today = now.toISOString().split('T')[0];
+    setDateRange({ start: `${year}-${month}-01`, end: today });
   };
 
   const getCalendarDays = () => {
@@ -387,8 +499,10 @@ export default function App() {
   };
 
   const handleServiceChange = (value) => {
-    const branch = BRANCHES[newTransaction.branch];
-    const serviceObj = branch.services[newTransaction.serviceType]?.[newTransaction.category]?.find(s => s.name === value);
+    // V2.3: Use dynamic services with fallback
+    const activeServices = getActiveServices(newTransaction.branch);
+    const serviceObj = activeServices[newTransaction.serviceType]?.[newTransaction.category]?.find(s => s.name === value)
+      || BRANCHES[newTransaction.branch].services[newTransaction.serviceType]?.[newTransaction.category]?.find(s => s.name === value);
     const price = serviceObj?.price || 0;
     const cuts = calculateCuts(newTransaction.serviceType, price);
     setNewTransaction({
@@ -415,6 +529,13 @@ export default function App() {
     const staffName = newTransaction.staff === 'freelancer' ? customStaff.trim() : newTransaction.staff;
     if (!newTransaction.service || !staffName) {
       alert('Please fill in all fields including staff selection');
+      return;
+    }
+
+    // V2.3.1: Validate date is not in the future
+    const today = new Date().toISOString().split('T')[0];
+    if (newTransaction.date > today) {
+      alert('Transaction date cannot be in the future');
       return;
     }
 
@@ -782,6 +903,120 @@ export default function App() {
     }
   };
 
+  // V2.3: Service CRUD Functions
+  const migrateServicesToFirestore = async () => {
+    if (!window.confirm('Migrate all services from BRANCHES to Firestore? This is a one-time operation.')) return;
+
+    try {
+      const batch = writeBatch(db);
+      Object.keys(BRANCHES).forEach(branchKey => {
+        const branch = BRANCHES[branchKey];
+        Object.keys(branch.services).forEach(serviceType => {
+          Object.keys(branch.services[serviceType]).forEach(category => {
+            branch.services[serviceType][category].forEach(service => {
+              const docRef = doc(collection(db, 'services'));
+              batch.set(docRef, {
+                branch: branchKey,
+                serviceType,
+                category,
+                serviceName: service.name,
+                price: service.price,
+                createdAt: new Date(),
+                updatedAt: new Date()
+              });
+            });
+          });
+        });
+      });
+      await batch.commit();
+      alert('Services migration complete!');
+    } catch (error) {
+      alert('Migration error: ' + error.message);
+    }
+  };
+
+  const handleAddService = async () => {
+    if (!newService.name || newService.price <= 0) {
+      alert('Please fill service name and valid price');
+      return;
+    }
+    if (!servicesTab.category) {
+      alert('Please select or create a category first');
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, 'services'), {
+        branch: servicesTab.branch,
+        serviceType: servicesTab.serviceType,
+        category: servicesTab.category,
+        serviceName: newService.name,
+        price: parseFloat(newService.price),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      setNewService({ name: '', price: 0 });
+    } catch (error) {
+      alert('Error adding service: ' + error.message);
+    }
+  };
+
+  const handleUpdateService = async (serviceId, updates) => {
+    try {
+      await updateDoc(doc(db, 'services', serviceId), {
+        ...updates,
+        updatedAt: new Date()
+      });
+      setEditingService(null);
+    } catch (error) {
+      alert('Error updating service: ' + error.message);
+    }
+  };
+
+  const handleDeleteService = async (serviceId) => {
+    if (!window.confirm('Delete this service?')) return;
+    try {
+      await deleteDoc(doc(db, 'services', serviceId));
+    } catch (error) {
+      alert('Error deleting service: ' + error.message);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCategory.trim()) {
+      alert('Please enter a category name');
+      return;
+    }
+
+    // Just set the category in tab state - it will be created when first service is added
+    setServicesTab({ ...servicesTab, category: newCategory.trim() });
+    setNewCategory('');
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!servicesTab.category) {
+      alert('Select a category first');
+      return;
+    }
+    if (!window.confirm(`Delete entire category "${servicesTab.category}" and all its services?`)) return;
+
+    try {
+      const q = query(
+        collection(db, 'services'),
+        where('branch', '==', servicesTab.branch),
+        where('serviceType', '==', servicesTab.serviceType),
+        where('category', '==', servicesTab.category)
+      );
+      const snapshot = await getDocs(q);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach(docSnap => batch.delete(docSnap.ref));
+      await batch.commit();
+      setServicesTab({ ...servicesTab, category: '' });
+    } catch (error) {
+      alert('Error deleting category: ' + error.message);
+    }
+  };
+
   const getBranchExpenses = (branchKey) => {
     let expenses = 0;
 
@@ -916,7 +1151,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.2</p>
+            <p className="text-gray-600">Management System V2.3.2</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -1259,9 +1494,11 @@ export default function App() {
 
   const renderTransactionForm = () => {
     const branch = BRANCHES[newTransaction.branch];
-    const serviceTypes = Object.keys(branch.services);
-    const categories = newTransaction.serviceType ? Object.keys(branch.services[newTransaction.serviceType] || {}) : [];
-    const services = newTransaction.category ? branch.services[newTransaction.serviceType]?.[newTransaction.category] || [] : [];
+    // V2.3: Use dynamic services with fallback to BRANCHES
+    const activeServices = getActiveServices(newTransaction.branch);
+    const serviceTypes = Object.keys(activeServices).length > 0 ? Object.keys(activeServices) : Object.keys(branch.services);
+    const categories = newTransaction.serviceType ? Object.keys(activeServices[newTransaction.serviceType] || branch.services[newTransaction.serviceType] || {}) : [];
+    const servicesList = newTransaction.category ? (activeServices[newTransaction.serviceType]?.[newTransaction.category] || branch.services[newTransaction.serviceType]?.[newTransaction.category] || []) : [];
     const staff = branch.staff[newTransaction.serviceType] || [];
 
     return (
@@ -1339,7 +1576,7 @@ export default function App() {
                 className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Select Service...</option>
-                {services.map(s => <option key={s.name} value={s.name}>{s.name} - PHP {s.price}</option>)}
+                {servicesList.map(s => <option key={s.name} value={s.name}>{s.name} - ₱{s.price}</option>)}
               </select>
             </div>
 
@@ -1372,6 +1609,19 @@ export default function App() {
               />
             </div>
           )}
+
+          {/* V2.3.1: Transaction Date (Backdating) */}
+          <div className="md:w-1/3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Transaction Date</label>
+            <input
+              type="date"
+              value={newTransaction.date}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Select the date this transaction occurred</p>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg">
             <div>
@@ -1651,6 +1901,216 @@ export default function App() {
     );
   };
 
+  // V2.3.2: Separate Services Panel (accessible by Manager + Admin)
+  const renderServicesPanel = () => {
+    // Branch-specific service types
+    const availableServiceTypes = servicesTab.branch === 'elite'
+      ? ['Barber', 'Salon']
+      : ['Barber'];
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <Scissors className="w-6 h-6 text-green-600" />
+          <h2 className="text-2xl font-bold text-gray-800">Services Management</h2>
+        </div>
+
+        <div className="flex justify-between items-center">
+          <p className="text-sm text-gray-600">Manage services, categories, and pricing for each branch.</p>
+          <button
+            onClick={migrateServicesToFirestore}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700"
+          >
+            Migrate from BRANCHES
+          </button>
+        </div>
+
+        {/* Branch & Type Selectors */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex flex-wrap gap-4 items-center">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+              <select
+                value={servicesTab.branch}
+                onChange={(e) => {
+                  const newBranch = e.target.value;
+                  const newServiceType = newBranch === 'elite' ? servicesTab.serviceType : 'Barber';
+                  setServicesTab({ ...servicesTab, branch: newBranch, serviceType: newServiceType, category: '' });
+                }}
+                className="px-3 py-2 border rounded-lg"
+              >
+                {Object.entries(BRANCHES).map(([key, b]) => (
+                  <option key={key} value={key}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Service Type</label>
+              <div className="flex gap-2">
+                {availableServiceTypes.map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setServicesTab({ ...servicesTab, serviceType: type, category: '' })}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                      servicesTab.serviceType === type ? 'bg-green-600 text-white' : 'bg-gray-100 hover:bg-gray-200'
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Categories */}
+        <div className="bg-white rounded-lg shadow p-4">
+          <h4 className="font-semibold mb-3">Categories</h4>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {Object.keys(getActiveServices(servicesTab.branch)[servicesTab.serviceType] || {}).map(cat => (
+              <button
+                key={cat}
+                onClick={() => setServicesTab({ ...servicesTab, category: cat })}
+                className={`px-3 py-2 rounded-lg text-sm ${
+                  servicesTab.category === cat ? 'bg-green-600 text-white' : 'bg-gray-100 hover:bg-gray-200'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="New category name"
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              className="px-3 py-2 border rounded-lg flex-1"
+            />
+            <button onClick={handleAddCategory} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm">
+              Add Category
+            </button>
+            {servicesTab.category && (
+              <button onClick={handleDeleteCategory} className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm">
+                Delete Category
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Services in Selected Category */}
+        {servicesTab.category && (
+          <div className="bg-white rounded-lg shadow overflow-hidden">
+            <div className="px-6 py-4 border-b bg-green-50">
+              <h4 className="font-semibold text-green-900">
+                Services in "{servicesTab.category}"
+              </h4>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left">Service Name</th>
+                    <th className="px-4 py-3 text-right">Price</th>
+                    <th className="px-4 py-3 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {(getActiveServices(servicesTab.branch)[servicesTab.serviceType]?.[servicesTab.category] || []).map(service => (
+                    <tr key={service.id || service.name} className="hover:bg-gray-50">
+                      {editingService?.id && service.id && editingService.id === service.id ? (
+                        <>
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={editingService.name}
+                              onChange={(e) => setEditingService({ ...editingService, name: e.target.value })}
+                              className="w-full px-2 py-1 border rounded"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <input
+                              type="number"
+                              value={editingService.price}
+                              onChange={(e) => setEditingService({ ...editingService, price: parseFloat(e.target.value) || 0 })}
+                              className="w-24 px-2 py-1 border rounded text-right"
+                            />
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => handleUpdateService(service.id, { serviceName: editingService.name, price: editingService.price })}
+                              className="p-1 text-green-600 hover:bg-green-50 rounded mr-1"
+                            >
+                              <Save className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setEditingService(null)}
+                              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-4 py-3 font-medium">{service.name}</td>
+                          <td className="px-4 py-3 text-right">₱{service.price?.toLocaleString()}</td>
+                          <td className="px-4 py-3 text-center">
+                            {service.id ? (
+                              <>
+                                <button
+                                  onClick={() => setEditingService({ id: service.id, name: service.name, price: service.price })}
+                                  className="p-1 text-blue-600 hover:bg-blue-50 rounded mr-1"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteService(service.id)}
+                                  className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-gray-400">Static data - Run migration to edit</span>
+                            )}
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Add New Service */}
+            <div className="px-4 py-4 bg-gray-50 border-t">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Service name"
+                  value={newService.name}
+                  onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+                  className="px-3 py-2 border rounded-lg flex-1"
+                />
+                <input
+                  type="number"
+                  placeholder="Price"
+                  value={newService.price || ''}
+                  onChange={(e) => setNewService({ ...newService, price: parseFloat(e.target.value) || 0 })}
+                  className="px-3 py-2 border rounded-lg w-32"
+                />
+                <button onClick={handleAddService} className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm flex items-center gap-1">
+                  <Plus className="w-4 h-4" /> Add Service
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderAdminPanel = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -1665,7 +2125,7 @@ export default function App() {
         </p>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button onClick={() => setAdminTab('users')} className={`px-4 py-2 rounded-lg text-sm font-medium ${adminTab === 'users' ? 'bg-blue-600 text-white' : 'bg-gray-100'}`}>
           <Users className="w-4 h-4 inline mr-1" /> User Management
         </button>
@@ -1796,14 +2256,24 @@ export default function App() {
 
     return (
       <div className="space-y-6">
+        {/* V2.3: Current Period Indicator */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-800">
+          📅 Current Period: <span className="font-bold">
+            {new Date(dateRange.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            {' - '}
+            {new Date(dateRange.end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
+        </div>
+
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <h2 className="text-2xl font-bold text-gray-800">{branchName}</h2>
 
           <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={setCurrentMonthRange} className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm font-bold">📅 Current Month</button>
             <button onClick={setDailyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Daily</button>
             <button onClick={setFirstHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">1st-15th</button>
             <button onClick={setSecondHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">16th-End</button>
-            <button onClick={setMonthlyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Monthly</button>
+            <button onClick={setMonthlyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Full Month</button>
             <input type="date" value={dateRange.start} onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })} className="px-2 py-1 border rounded text-sm" />
             <span className="text-gray-600">to</span>
             <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="px-2 py-1 border rounded text-sm" />
@@ -1833,6 +2303,85 @@ export default function App() {
           <DashboardCard title="Expenses" value={`PHP ${stats.totalExpenses.toLocaleString()}`} icon={Package} color="bg-red-500" />
           <DashboardCard title="Transactions" value={stats.transactionCount} icon={Calendar} color="bg-purple-500" />
         </div>
+
+        {/* V2.3: Payment Method Tracker */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold mb-4">Payment Method Breakdown</h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {PAYMENT_MODES.map(mode => {
+              const config = paymentMethodConfig[mode];
+              const Icon = config?.icon || CreditCard;
+              return (
+                <div key={mode} className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className={`inline-flex items-center justify-center w-10 h-10 rounded-full ${config?.color || 'bg-gray-500'} mb-2`}>
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  <p className="text-sm text-gray-600">{mode}</p>
+                  <p className={`text-xl font-bold ${config?.textColor || 'text-gray-800'}`}>
+                    ₱{(paymentMethodTotals[mode] || 0).toLocaleString()}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* V2.3.1: Staff Earnings Table - Branch-specific with search */}
+        {(() => {
+          const branchStaffEarnings = getStaffEarnings(branchKey);
+          return (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="px-6 py-4 border-b flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                <h3 className="text-lg font-semibold">Staff Earnings</h3>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="text"
+                    placeholder="🔍 Search staff by name..."
+                    value={staffSearchFilter}
+                    onChange={(e) => setStaffSearchFilter(e.target.value)}
+                    className="px-3 py-1 border rounded text-sm w-48"
+                  />
+                  <span className="text-sm text-gray-600">
+                    Total: ₱{branchStaffEarnings.reduce((sum, s) => sum + s.total, 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left cursor-pointer hover:bg-gray-100"
+                          onClick={() => setStaffEarningsSort({ field: 'name', asc: staffEarningsSort.field === 'name' ? !staffEarningsSort.asc : true })}>
+                        Staff Name {staffEarningsSort.field === 'name' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                      <th className="px-4 py-3 text-right cursor-pointer hover:bg-gray-100"
+                          onClick={() => setStaffEarningsSort({ field: 'total', asc: staffEarningsSort.field === 'total' ? !staffEarningsSort.asc : false })}>
+                        Total Earnings {staffEarningsSort.field === 'total' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                      <th className="px-4 py-3 text-right cursor-pointer hover:bg-gray-100"
+                          onClick={() => setStaffEarningsSort({ field: 'count', asc: staffEarningsSort.field === 'count' ? !staffEarningsSort.asc : false })}>
+                        Transactions {staffEarningsSort.field === 'count' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {branchStaffEarnings.length > 0 ? branchStaffEarnings.map((staff) => (
+                      <tr key={staff.name} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium">{staff.name}</td>
+                        <td className="px-4 py-3 text-right font-medium">₱{staff.total.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-right">{staff.count}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-8 text-center text-gray-500">No earnings data for selected period</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b">
@@ -1966,7 +2515,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.2 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3.2 ● Cloud</span>
             </div>
             <button
               onClick={async () => {
@@ -2002,6 +2551,9 @@ export default function App() {
               <button onClick={() => setCurrentView('attendance')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'attendance' ? 'bg-blue-600 text-white' : 'bg-white hover:bg-gray-50'}`}>
                 <UserCheck className="w-4 h-4" /> Attendance
               </button>
+              <button onClick={() => setCurrentView('services')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'services' ? 'bg-green-600 text-white' : 'bg-green-500 text-white hover:bg-green-600'}`}>
+                <Scissors className="w-4 h-4" /> Services
+              </button>
             </>
           )}
           {isAdmin && (
@@ -2012,6 +2564,7 @@ export default function App() {
         </div>
 
         {currentView === 'admin' && isAdmin ? renderAdminPanel() :
+          currentView === 'services' && canManage ? renderServicesPanel() :
           currentView === 'transactions' && canManage ? renderTransactionForm() :
             currentView === 'inventory' ? renderInventory() :
               currentView === 'attendance' ? renderAttendance() :
