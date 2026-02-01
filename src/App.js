@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Users, DollarSign, TrendingUp, Calendar, LogOut, Plus, Trash2, Package, UserCheck, Shield, Edit2, Save, X, Database, UserPlus, Key, Download, Edit3, Minus } from 'lucide-react';
+import { Users, DollarSign, TrendingUp, Calendar, LogOut, Plus, Trash2, Package, UserCheck, Shield, Edit2, Save, X, Database, UserPlus, Key, Download, Edit3, Minus, Banknote, Smartphone, CreditCard } from 'lucide-react';
 import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.2] - INVENTORY CONSUMPTION LOGIC & MONTHLY VIEW
-//  Version: 2.2 | Minus button = consumption only (no price deduction), Added Monthly view
+// [CHECKPOINT V2.3] - STAFF EARNINGS, PAYMENT TRACKER, BACKDATING
+//  Version: 2.3 | Staff Earnings Table, Payment Method Tracker, Transaction Backdating
 // ============================================================
 
 const BRANCHES = {
@@ -53,7 +53,9 @@ const BRANCHES = {
         'Package': [
           { name: '1 Facial and Hair Treatment', price: 2200 },
           { name: '2 Scalp Treatment and Facial and Hair Cut', price: 1600 },
-          { name: '3 Facial and Hair Cut and Shave', price: 1750 }
+          { name: '3 Facial and Hair Cut and Shave', price: 1750 },
+          { name: '4 HC/Shave', price: 550 },
+          { name: '5 Headshave / Beardtrim', price: 550 }
         ]
       },
       Salon: {
@@ -73,7 +75,10 @@ const BRANCHES = {
           { name: 'Gel Manicure', price: 450 },
           { name: 'Gel Pedicure', price: 500 },
           { name: 'Nail Extension', price: 999 },
-          { name: 'Soft Gel', price: 250 }
+          { name: 'Soft Gel', price: 250 },
+          { name: 'Footspa/Pedi', price: 450 },
+          { name: 'Gel Remove', price: 150 },
+          { name: 'Mani/Pedi', price: 275 }
         ],
         'Waxing': [
           { name: 'Under Arms', price: 250 },
@@ -205,6 +210,10 @@ export default function App() {
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'manager' });
   const [showAddUser, setShowAddUser] = useState(false);
 
+  // V2.3: Staff Earnings state
+  const [staffEarningsSort, setStaffEarningsSort] = useState({ field: 'total', asc: false });
+  const [staffSearchFilter, setStaffSearchFilter] = useState('');
+
   useEffect(() => {
     const unsubscribe = onAuthChange(async (firebaseUser) => {
       if (firebaseUser) {
@@ -317,6 +326,15 @@ export default function App() {
     setDateRange({ start: `${year}-${month}-01`, end: `${year}-${month}-${lastDay}` });
   };
 
+  // V2.3: Current Month button (1st of month to today)
+  const setCurrentMonthRange = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const today = now.toISOString().split('T')[0];
+    setDateRange({ start: `${year}-${month}-01`, end: today });
+  };
+
   const getCalendarDays = () => {
     const { year, month } = calendarMonth;
     const firstDay = new Date(year, month, 1);
@@ -357,6 +375,76 @@ export default function App() {
   const calculateCuts = (serviceType, price) => {
     if (serviceType === 'Barber') return { managementCut: price * 0.5, staffCut: price * 0.5 };
     return { managementCut: price * 0.9, staffCut: price * 0.1 };
+  };
+
+  // V2.3: Staff Earnings calculation function
+  const getStaffEarnings = (branchKey) => {
+    const { start, end } = dateRange;
+
+    // Branch-specific filtering
+    const branchTxs = branchKey === 'summary'
+      ? [...transactions.elite, ...transactions.arellano, ...transactions.typeC]
+      : transactions[branchKey] || [];
+
+    const filtered = branchTxs.filter(tx => tx.date >= start && tx.date <= end);
+    const earnings = {};
+
+    // Calculate totals per staff
+    filtered.forEach(tx => {
+      if (!earnings[tx.staff]) {
+        earnings[tx.staff] = { name: tx.staff, total: 0, count: 0 };
+      }
+      earnings[tx.staff].total += tx.staffCut || 0;
+      earnings[tx.staff].count += 1;
+    });
+
+    // Filter: only staff with transactions
+    let result = Object.values(earnings).filter(s => s.count > 0);
+
+    // Apply search filter
+    if (staffSearchFilter) {
+      result = result.filter(s =>
+        s.name.toLowerCase().includes(staffSearchFilter.toLowerCase())
+      );
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      const aVal = staffEarningsSort.field === 'name' ? a.name :
+                   staffEarningsSort.field === 'count' ? a.count : a.total;
+      const bVal = staffEarningsSort.field === 'name' ? b.name :
+                   staffEarningsSort.field === 'count' ? b.count : b.total;
+
+      if (staffEarningsSort.field === 'name') {
+        return staffEarningsSort.asc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      return staffEarningsSort.asc ? aVal - bVal : bVal - aVal;
+    });
+
+    return result;
+  };
+
+  // V2.3: Payment Method Totals
+  const paymentMethodTotals = useMemo(() => {
+    const { start, end } = dateRange;
+    const allTxs = [...transactions.elite, ...transactions.arellano, ...transactions.typeC];
+    const filtered = allTxs.filter(tx => tx.date >= start && tx.date <= end);
+    const totals = {};
+
+    PAYMENT_MODES.forEach(mode => totals[mode] = 0);
+    filtered.forEach(tx => {
+      totals[tx.paymentMode] = (totals[tx.paymentMode] || 0) + tx.price;
+    });
+
+    return totals;
+  }, [transactions, dateRange]);
+
+  const paymentMethodConfig = {
+    Cash: { icon: Banknote, color: 'bg-green-500', textColor: 'text-green-600' },
+    GCash: { icon: Smartphone, color: 'bg-blue-500', textColor: 'text-blue-600' },
+    BDO: { icon: CreditCard, color: 'bg-orange-500', textColor: 'text-orange-600' },
+    BPI: { icon: CreditCard, color: 'bg-red-500', textColor: 'text-red-600' },
+    PayMaya: { icon: Smartphone, color: 'bg-purple-500', textColor: 'text-purple-600' }
   };
 
   const handleServiceTypeChange = (value) => {
@@ -415,6 +503,13 @@ export default function App() {
     const staffName = newTransaction.staff === 'freelancer' ? customStaff.trim() : newTransaction.staff;
     if (!newTransaction.service || !staffName) {
       alert('Please fill in all fields including staff selection');
+      return;
+    }
+
+    // V2.3: Validate date is not in the future
+    const today = new Date().toISOString().split('T')[0];
+    if (newTransaction.date > today) {
+      alert('Transaction date cannot be in the future');
       return;
     }
 
@@ -916,7 +1011,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.2</p>
+            <p className="text-gray-600">Management System V2.3</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -1396,6 +1491,23 @@ export default function App() {
             </div>
           </div>
 
+          {/* V2.3: Transaction Date (Backdating) */}
+          <div className="md:w-1/3">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Transaction Date
+            </label>
+            <input
+              type="date"
+              value={newTransaction.date}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })}
+              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Select the date this transaction occurred
+            </p>
+          </div>
+
           <button
             onClick={handleAddTransaction}
             className="w-full md:w-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-medium"
@@ -1800,6 +1912,7 @@ export default function App() {
           <h2 className="text-2xl font-bold text-gray-800">{branchName}</h2>
 
           <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={setCurrentMonthRange} className="px-3 py-1 bg-green-500 hover:bg-green-600 text-white rounded text-sm font-bold">Current Month</button>
             <button onClick={setDailyRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">Daily</button>
             <button onClick={setFirstHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">1st-15th</button>
             <button onClick={setSecondHalfRange} className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm">16th-End</button>
@@ -1808,6 +1921,15 @@ export default function App() {
             <span className="text-gray-600">to</span>
             <input type="date" value={dateRange.end} onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })} className="px-2 py-1 border rounded text-sm" />
           </div>
+        </div>
+
+        {/* V2.3: Period Indicator */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-800">
+          Current Period: <span className="font-bold">
+            {new Date(dateRange.start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            {' - '}
+            {new Date(dateRange.end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          </span>
         </div>
 
         {branchKey === 'summary' && (
@@ -1833,6 +1955,104 @@ export default function App() {
           <DashboardCard title="Expenses" value={`PHP ${stats.totalExpenses.toLocaleString()}`} icon={Package} color="bg-red-500" />
           <DashboardCard title="Transactions" value={stats.transactionCount} icon={Calendar} color="bg-purple-500" />
         </div>
+
+        {/* V2.3: Payment Method Tracker */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold mb-4">Payment Method Breakdown</h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {PAYMENT_MODES.map(mode => {
+              const config = paymentMethodConfig[mode];
+              const Icon = config?.icon || CreditCard;
+              return (
+                <div key={mode} className="bg-gray-50 rounded-lg p-4 text-center">
+                  <div className={`inline-flex items-center justify-center w-10 h-10 rounded-full ${config?.color || 'bg-gray-500'} mb-2`}>
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  <p className="text-sm text-gray-600">{mode}</p>
+                  <p className={`text-xl font-bold ${config?.textColor || 'text-gray-800'}`}>
+                    PHP {(paymentMethodTotals[mode] || 0).toLocaleString()}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* V2.3: Staff Earnings Table */}
+        {(() => {
+          const branchStaffEarnings = getStaffEarnings(branchKey);
+          return (
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              {/* Header with Search */}
+              <div className="px-6 py-4 border-b flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                <h3 className="text-lg font-semibold">Staff Earnings</h3>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="text"
+                    placeholder="Search staff..."
+                    value={staffSearchFilter}
+                    onChange={(e) => setStaffSearchFilter(e.target.value)}
+                    className="px-3 py-1 border rounded text-sm w-48"
+                  />
+                  <span className="text-sm text-gray-600">
+                    Total: PHP {branchStaffEarnings.reduce((sum, s) => sum + s.total, 0).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th
+                        className="px-4 py-3 text-left cursor-pointer hover:bg-gray-100"
+                        onClick={() => setStaffEarningsSort({
+                          field: 'name',
+                          asc: staffEarningsSort.field === 'name' ? !staffEarningsSort.asc : true
+                        })}>
+                        Staff Name {staffEarningsSort.field === 'name' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                      <th
+                        className="px-4 py-3 text-right cursor-pointer hover:bg-gray-100"
+                        onClick={() => setStaffEarningsSort({
+                          field: 'total',
+                          asc: staffEarningsSort.field === 'total' ? !staffEarningsSort.asc : false
+                        })}>
+                        Total Earnings {staffEarningsSort.field === 'total' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                      <th
+                        className="px-4 py-3 text-right cursor-pointer hover:bg-gray-100"
+                        onClick={() => setStaffEarningsSort({
+                          field: 'count',
+                          asc: staffEarningsSort.field === 'count' ? !staffEarningsSort.asc : false
+                        })}>
+                        Transactions {staffEarningsSort.field === 'count' && (staffEarningsSort.asc ? '↑' : '↓')}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {branchStaffEarnings.length > 0 ? branchStaffEarnings.map((staff) => (
+                      <tr key={staff.name} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium">{staff.name}</td>
+                        <td className="px-4 py-3 text-right font-medium">
+                          PHP {staff.total.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right">{staff.count}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-8 text-center text-gray-500">
+                          No earnings data for selected period
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b">
@@ -1966,7 +2186,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.2 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3 ● Cloud</span>
             </div>
             <button
               onClick={async () => {
