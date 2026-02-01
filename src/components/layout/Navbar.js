@@ -24,7 +24,7 @@ export function Navbar({ user, userRole, currentView, setCurrentView, onLogout }
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.4 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3 ● Cloud</span>
             </div>
             <button
               onClick={onLogout}

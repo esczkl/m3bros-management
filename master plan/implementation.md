@@ -1,71 +1,43 @@
-# Refactoring Implementation Plan for `src/app.js`
+# Implementation Plan: v2.3 Component Extraction
 
-## Goal Description
-The `src/app.js` file has grown too large (2000+ lines) and handles too many responsibilities (Auth, Data Fetching, UI for multiple features). The goal is to refactor it into smaller, manageable components and extract business logic into hooks/services. This will make the codebase more efficient, easier to maintain, and ready for new features.
+## Goal
+Decompose the monolithic `v2.3` App.js into modular components to improve code manageability, while ensuring **zero functional changes**.
 
-## Proposed Changes
+## Source of Truth
+- **`src/App.js`** (Current File): All logic must be extracted exactly as is from here.
 
-### Configuration
-#### [NEW] `src/config/constants.js`
-- Move `BRANCHES`, `COLORS`, `PAYMENT_MODES`, `EXPENSE_CATEGORIES`, `UNIT_OPTIONS` here.
+## Execution Steps
 
-### Services / Hooks
-#### [NEW] `src/hooks`
-- `useAuth()`: Handle login/logout and user state.
-- `useData()` or specific hooks like `useTransactions`, `useInventory`: Handle Firebase subscriptions.
+### 1. Configuration & Constants
+- Move constant objects `BRANCHES`, `COLORS`, `PAYMENT_MODES`, `EXPENSE_CATEGORIES`, `UNIT_OPTIONS` to `src/config/constants.js`.
 
-### Components
-#### [NEW] `src/components/auth/Login.js`
-- Extract the login form.
+### 2. Utilities
+- Move helper functions `formatCurrency`, `getMonthName`, `getCalendarDays`, `navigateMonth` logic to `src/utils/helpers.js`.
 
-#### [NEW] `src/components/layout/Navbar.js`
-- Extract the navigation bar.
-- **Update**: Apply specific colors to Inventory and Attendance buttons.
+### 3. Custom Hooks
+- **`useAuth`**: Extract `user`, `userRole`, `loading`, `loginForm` state and `onAuthChange` effect.
+- **`useFirestoreData`**: Extract listeners for `transactions`, `inventory`, `inventoryLogs`, `attendance`, `usersList`.
 
-#### [NEW] `src/components/inventory/InventoryManager.js`
-- Extract `renderInventory` and `renderInventoryLogs`.
+### 4. Component Extraction
+Create the following components in `src/components/`, ensuring they receive necessary props:
 
-#### [NEW] `src/components/transactions/TransactionForm.js`
-- Extract `renderTransactionForm`.
-- **Update**: Add editable `date` field (default: current date).
+| Component | Path | Responsibilities |
+|-----------|------|------------------|
+| **Login** | `auth/Login.js` | Login form UI & handler. |
+| **Navbar** | `layout/Navbar.js` | Top navigation, logout, role display. |
+| **Dashboard** | `dashboard/Dashboard.js` | Stats cards, charts, summary blocks. |
+| **InventoryManager** | `inventory/InventoryManager.js` | Inventory CRUD, consumption logic (`renderInventory`). |
+| **TransactionForm** | `transactions/TransactionForm.js` | Add transaction form (`renderTransactionForm`). |
+| **AttendanceTracker** | `attendance/AttendanceTracker.js` | Attendance logging & calendar (`renderAttendance`). |
+| **AdminPanel** | `admin/AdminPanel.js` | User management (`renderAdmin`). |
 
-#### [NEW] `src/components/attendance/AttendanceTracker.js`
-- Extract `renderAttendance`.
+### 5. Config/App.js Refactor
+- Import all hooks and components into `App.js`.
+- Pass state and handlers as props.
+- Ensure the `switch/case` logic for `currentView` remains identical.
 
-#### [NEW] `src/components/admin/AdminPanel.js`
-- Extract `renderAdminPanel`.
-
-#### [NEW] `src/components/dashboard/Dashboard.js`
-- Extract `renderDashboard` and stats calculation.
-- **Update**: Include `PaymentTracker` and `StaffEarnings`.
-
-#### [NEW] `src/components/dashboard/StaffEarnings.js`
-- **New Feature**: Table showing total commission per staff.
-- Features: Sortable (Daily, Weekly, Monthly), Search Filter.
-- **Logic**: Filter displayed staff based on selected Branch view (e.g., Elite view shows only Elite staff).
-
-#### [NEW] `src/components/dashboard/FundTracker.js`
-- **New Feature**: Visual tracker for payment methods (formerly Payment Method Tracker).
-- **UI**: Ensure logos and text are aligned; support 2-row layout if needed.
-
-#### [NEW] `src/components/admin/ServicesManager.js`
-- **New Feature**: CRUD interface for Services.
-- Editable Services Configuration (initially stored in constants/firebase).
-
-### Data & Logic
-- **Monthly Default**: Update initial state of date ranges to start/end of current month.
-- **Service Storage**: Move hardcoded `BRANCHES` services to Firestore or a dynamic config to allow editing.
-
-### Main Entry
-#### [MODIFY] `src/app.js`
-- Remove all the extracted logic.
-- Import and compose the new components.
-- Use the custom hooks for data.
-
-## Verification Plan
-1.  **Refactoring Check**: Verify login, navigation, and existing features work 1:1.
-2.  **New Features**:
-    - Check "Staff Earnings" table sorts and filters correctly.
-    - Check "Fund Tracker" layout and totals.
-    - Check editable Date in transactions.
-    - Check Responsive Layout on different window sizes.
+## Verification
+- App must build without errors.
+- Navigation between tabs must work.
+- "Add Transaction" must work exactly as before.
+- Inventory "Decrease" button must function as "Consumption" (no financial deduction), consistent with v2.2/2.3 logic.

@@ -17,7 +17,7 @@ export function Login({ onLogin }) {
       <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-          <p className="text-gray-600">Management System V2.4</p>
+          <p className="text-gray-600">Management System V2.3</p>
           <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
         </div>
         <div className="space-y-4">
