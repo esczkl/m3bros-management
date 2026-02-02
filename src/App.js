@@ -5,8 +5,8 @@ import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.3.1] - STAFF ADDITIONS
-//  Version: 2.3.1 | Added AJ and Orly to C Arellano staff
+// [CHECKPOINT V2.3.2] - ATTENDANCE OTHER OPTION
+//  Version: 2.3.2 | Added "Other" option to attendance staff dropdown
 // ============================================================
 
 const BRANCHES = {
@@ -213,6 +213,9 @@ export default function App() {
   // V2.3: Staff Earnings state
   const [staffEarningsSort, setStaffEarningsSort] = useState({ field: 'total', asc: false });
   const [staffSearchFilter, setStaffSearchFilter] = useState('');
+
+  // V2.3.2: Custom attendance staff
+  const [customAttendanceStaff, setCustomAttendanceStaff] = useState('');
 
   useEffect(() => {
     const unsubscribe = onAuthChange(async (firebaseUser) => {
@@ -781,11 +784,13 @@ export default function App() {
       alert('Permission denied');
       return;
     }
-    if (!newAttendance.staff) {
-      alert('Please select a staff member');
+    // V2.3.2: Handle custom staff name
+    const staffName = newAttendance.staff === 'other' ? customAttendanceStaff.trim() : newAttendance.staff;
+    if (!staffName) {
+      alert('Please select or enter a staff member');
       return;
     }
-    const exists = attendance.find(a => a.staff === newAttendance.staff && a.date === newAttendance.date);
+    const exists = attendance.find(a => a.staff === staffName && a.date === newAttendance.date);
     if (exists) {
       alert('This staff member already has an attendance entry for this date');
       return;
@@ -794,15 +799,17 @@ export default function App() {
     try {
       await addDoc(collection(db, 'attendance'), {
         ...newAttendance,
+        staff: staffName,
         timestamp: new Date().toISOString(),
         createdBy: user.uid
       });
       setNewAttendance({
-        staff: newAttendance.staff,
+        staff: newAttendance.staff === 'other' ? 'other' : staffName,
         branch: newAttendance.branch,
         status: 'present',
         date: new Date().toISOString().split('T')[0]
       });
+      if (newAttendance.staff === 'other') setCustomAttendanceStaff('');
     } catch (error) {
       alert('Error logging attendance: ' + error.message);
     }
@@ -1011,7 +1018,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.3.1</p>
+            <p className="text-gray-600">Management System V2.3.2</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -1557,12 +1564,16 @@ export default function App() {
               </select>
               <select
                 value={newAttendance.staff}
-                onChange={(e) => setNewAttendance({ ...newAttendance, staff: e.target.value })}
+                onChange={(e) => {
+                  setNewAttendance({ ...newAttendance, staff: e.target.value });
+                  if (e.target.value !== 'other') setCustomAttendanceStaff('');
+                }}
                 className="px-3 py-2 border rounded-lg"
               >
                 {Object.values(BRANCHES[newAttendance.branch].staff).flat().map(s => (
                   <option key={s} value={s}>{s}</option>
                 ))}
+                <option value="other">Other</option>
               </select>
               <select
                 value={newAttendance.status}
@@ -1580,6 +1591,20 @@ export default function App() {
                 className="px-3 py-2 border rounded-lg"
               />
             </div>
+
+            {/* V2.3.2: Custom staff name input */}
+            {newAttendance.staff === 'other' && (
+              <div className="md:col-span-4">
+                <input
+                  type="text"
+                  value={customAttendanceStaff}
+                  onChange={(e) => setCustomAttendanceStaff(e.target.value)}
+                  placeholder="Enter staff name"
+                  className="w-full md:w-1/3 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
             <button
               onClick={handleAddAttendance}
               className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
@@ -2186,7 +2211,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.3.1 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3.2 ● Cloud</span>
             </div>
             <button
               onClick={async () => {
