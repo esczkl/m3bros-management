@@ -5,8 +5,8 @@ import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.3] - STAFF EARNINGS, PAYMENT TRACKER, BACKDATING
-//  Version: 2.3 | Staff Earnings Table, Payment Method Tracker, Transaction Backdating
+// [CHECKPOINT V2.3.1] - STAFF ADDITIONS
+//  Version: 2.3.1 | Added AJ and Orly to C Arellano staff
 // ============================================================
 
 const BRANCHES = {
@@ -115,7 +115,7 @@ const BRANCHES = {
         'Haircut Men and Women': [{ name: 'Hair Cut', price: 180 }]
       }
     },
-    staff: { Barber: ['Joseph', 'Rowel', 'Jared', 'Rommel'] }
+    staff: { Barber: ['Joseph', 'Rowel', 'Jared', 'Rommel', 'AJ', 'Orly'] }
   },
   typeC: {
     name: 'M3 Bros Type C Branch',
@@ -1011,7 +1011,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.3</p>
+            <p className="text-gray-600">Management System V2.3.1</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -2186,7 +2186,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.3 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3.1 ● Cloud</span>
             </div>
             <button
               onClick={async () => {
