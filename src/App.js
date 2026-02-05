@@ -5,9 +5,17 @@ import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.3.2] - ATTENDANCE OTHER OPTION
-//  Version: 2.3.2 | Added "Other" option to attendance staff dropdown
+// [CHECKPOINT V2.3.3] - DATE TIMEZONE FIX
+//  Version: 2.3.3 | Fixed date display using local timezone instead of UTC
 // ============================================================
+
+// Helper function to get local date string (fixes timezone issues)
+const getLocalDateString = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const BRANCHES = {
   elite: {
@@ -150,8 +158,8 @@ export default function App() {
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
   const [dateRange, setDateRange] = useState({
-    start: firstDayOfMonth.toISOString().split('T')[0],
-    end: today.toISOString().split('T')[0]
+    start: getLocalDateString(firstDayOfMonth),
+    end: getLocalDateString(today)
   });
 
   const [transactions, setTransactions] = useState({ elite: [], arellano: [], typeC: [] });
@@ -174,7 +182,7 @@ export default function App() {
     managementCut: 0,
     staffCut: 0,
     paymentMode: 'Cash',
-    date: new Date().toISOString().split('T')[0]
+    date: getLocalDateString()
   });
 
   const [newInventoryItem, setNewInventoryItem] = useState({
@@ -186,13 +194,13 @@ export default function App() {
     branch: 'elite',
     category: 'inventory',
     customCategory: '',
-    purchaseDate: new Date().toISOString().split('T')[0]
+    purchaseDate: getLocalDateString()
   });
 
   const [attendanceTimeframe, setAttendanceTimeframe] = useState('daily');
   const [attendanceDateRange, setAttendanceDateRange] = useState({
-    start: new Date().toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0]
+    start: getLocalDateString(),
+    end: getLocalDateString()
   });
   const [calendarMonth, setCalendarMonth] = useState({
     year: new Date().getFullYear(),
@@ -202,7 +210,7 @@ export default function App() {
     staff: 'Lito',
     branch: 'elite',
     status: 'present',
-    date: new Date().toISOString().split('T')[0]
+    date: getLocalDateString()
   });
 
   const [adminTab, setAdminTab] = useState('users');
@@ -302,7 +310,7 @@ export default function App() {
   const getDateRange = () => ({ start: dateRange.start, end: dateRange.end });
 
   const setDailyRange = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     setDateRange({ start: today, end: today });
   };
 
@@ -334,7 +342,7 @@ export default function App() {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
-    const today = now.toISOString().split('T')[0];
+    const today = getLocalDateString(now);
     setDateRange({ start: `${year}-${month}-01`, end: today });
   };
 
@@ -510,8 +518,8 @@ export default function App() {
     }
 
     // V2.3: Validate date is not in the future
-    const today = new Date().toISOString().split('T')[0];
-    if (newTransaction.date > today) {
+    const todayStr = getLocalDateString();
+    if (newTransaction.date > todayStr) {
       alert('Transaction date cannot be in the future');
       return;
     }
@@ -536,7 +544,7 @@ export default function App() {
         managementCut: 0,
         staffCut: 0,
         paymentMode: 'Cash',
-        date: new Date().toISOString().split('T')[0]
+        date: getLocalDateString()
       });
       setCustomStaff('');
     } catch (error) {
@@ -638,7 +646,7 @@ export default function App() {
         branch: 'elite',
         category: 'inventory',
         customCategory: '',
-        purchaseDate: new Date().toISOString().split('T')[0]
+        purchaseDate: getLocalDateString()
       });
     } catch (error) {
       alert('Error adding inventory: ' + error.message);
@@ -676,7 +684,7 @@ export default function App() {
         unit: item.unit,
         branch: item.branch,
         unitPrice: item.price,
-        date: new Date().toISOString().split('T')[0],
+        date: getLocalDateString(),
         timestamp: new Date().toISOString(),
         userId: user.uid,
         userName: user.name || user.email,
@@ -761,7 +769,7 @@ export default function App() {
         itemId: editingInventory.originalId,
         itemName: editingInventory.name,
         branch: editingInventory.branch,
-        date: new Date().toISOString().split('T')[0],
+        date: getLocalDateString(),
         timestamp: new Date().toISOString(),
         userId: user.uid,
         userName: user.name || user.email,
@@ -807,7 +815,7 @@ export default function App() {
         staff: newAttendance.staff === 'other' ? 'other' : staffName,
         branch: newAttendance.branch,
         status: 'present',
-        date: new Date().toISOString().split('T')[0]
+        date: getLocalDateString()
       });
       if (newAttendance.staff === 'other') setCustomAttendanceStaff('');
     } catch (error) {
@@ -1018,7 +1026,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.3.2</p>
+            <p className="text-gray-600">Management System V2.3.3</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -1506,7 +1514,7 @@ export default function App() {
             <input
               type="date"
               value={newTransaction.date}
-              max={new Date().toISOString().split('T')[0]}
+              max={getLocalDateString()}
               onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })}
               className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
             />
@@ -1527,17 +1535,17 @@ export default function App() {
   };
 
   const renderAttendance = () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     const { start, end } = attendanceTimeframe === 'daily'
       ? { start: today, end: today }
       : attendanceTimeframe === 'weekly'
-        ? { start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today }
-        : { start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today };
+        ? { start: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)), end: today }
+        : { start: getLocalDateString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)), end: today };
 
     const filtered = attendance.filter(a => a.date >= start && a.date <= end);
     const calendarDays = getCalendarDays();
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateString();
     const getAttendanceForDate = (d) => attendance.filter(a => a.date === d);
     const monthPrefix = `${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}`;
 
@@ -2211,7 +2219,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.3.2 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.3.3 ● Cloud</span>
             </div>
             <button
               onClick={async () => {
