@@ -5,8 +5,8 @@ import { auth, db, loginUser, logoutUser, onAuthChange } from './firebase';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy, updateDoc, setDoc, getDoc, where, writeBatch } from 'firebase/firestore';
 
 // ============================================================
-// [CHECKPOINT V2.3.3] - DATE TIMEZONE FIX
-//  Version: 2.3.3 | Fixed date display using local timezone instead of UTC
+// [CHECKPOINT V2.4] - INVENTORY REDESIGN
+//  Version: 2.4 | Separated inventory & expenses into distinct tables/forms
 // ============================================================
 
 // Helper function to get local date string (fixes timezone issues)
@@ -140,11 +140,12 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 const PAYMENT_MODES = ['Cash', 'GCash', 'BDO', 'BPI', 'PayMaya'];
 const EXPENSE_CATEGORIES = [
   { value: 'inventory', label: 'Inventory/Supplies' },
-  { value: 'utilities', label: 'Utilities (Electricity/Water)' },
-  { value: 'rent', label: 'Rent/Lease' },
-  { value: 'equipment', label: 'Equipment/Tools' },
   { value: 'misc', label: 'Miscellaneous' }
 ];
+
+// Backward-compatible category helpers
+const isStockCategory = (cat) => cat === 'inventory' || cat === 'equipment';
+const isExpenseCategory = (cat) => cat === 'utilities' || cat === 'rent' || (cat && cat.startsWith('misc'));
 const UNIT_OPTIONS = ['pcs', 'bottles', 'boxes', 'liters', 'packs', 'sachets', 'sheets', 'sets', 'other'];
 
 export default function App() {
@@ -195,6 +196,11 @@ export default function App() {
     category: 'inventory',
     customCategory: '',
     purchaseDate: getLocalDateString()
+  });
+
+  const [newExpenseItem, setNewExpenseItem] = useState({
+    name: '', price: 0, branch: 'elite',
+    customCategory: '', purchaseDate: getLocalDateString()
   });
 
   const [attendanceTimeframe, setAttendanceTimeframe] = useState('daily');
@@ -582,7 +588,7 @@ export default function App() {
     }
   };
 
-  const handleAddInventory = async () => {
+  const handleAddStock = async () => {
     if (!newInventoryItem.name) {
       alert('Please enter item name');
       return;
@@ -601,9 +607,6 @@ export default function App() {
     }
 
     const finalUnit = newInventoryItem.unit === 'other' ? newInventoryItem.customUnit : newInventoryItem.unit;
-    const finalCategory = newInventoryItem.category === 'misc' && newInventoryItem.customCategory
-      ? `misc: ${newInventoryItem.customCategory}`
-      : newInventoryItem.category;
 
     try {
       const itemRef = await addDoc(collection(db, 'inventory'), {
@@ -612,7 +615,7 @@ export default function App() {
         price: newInventoryItem.price,
         unit: finalUnit,
         branch: newInventoryItem.branch,
-        category: finalCategory,
+        category: 'inventory',
         purchaseDate: newInventoryItem.purchaseDate,
         timestamp: new Date().toISOString(),
         createdBy: user.uid
@@ -628,7 +631,7 @@ export default function App() {
         unitPrice: newInventoryItem.price,
         totalAmount: totalCost,
         branch: newInventoryItem.branch,
-        category: finalCategory,
+        category: 'inventory',
         date: newInventoryItem.purchaseDate,
         timestamp: new Date().toISOString(),
         userId: user.uid,
@@ -649,7 +652,61 @@ export default function App() {
         purchaseDate: getLocalDateString()
       });
     } catch (error) {
-      alert('Error adding inventory: ' + error.message);
+      alert('Error adding stock: ' + error.message);
+    }
+  };
+
+  const handleAddExpense = async () => {
+    if (!newExpenseItem.name) {
+      alert('Please enter expense name');
+      return;
+    }
+    if (newExpenseItem.price <= 0) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    const finalCategory = newExpenseItem.customCategory
+      ? `misc: ${newExpenseItem.customCategory}`
+      : 'misc';
+
+    try {
+      const itemRef = await addDoc(collection(db, 'inventory'), {
+        name: newExpenseItem.name,
+        quantity: 1,
+        price: newExpenseItem.price,
+        unit: 'bill',
+        branch: newExpenseItem.branch,
+        category: finalCategory,
+        purchaseDate: newExpenseItem.purchaseDate,
+        timestamp: new Date().toISOString(),
+        createdBy: user.uid
+      });
+
+      await addDoc(collection(db, 'inventoryLogs'), {
+        action: 'create',
+        itemId: itemRef.id,
+        itemName: newExpenseItem.name,
+        quantity: 1,
+        unit: 'bill',
+        unitPrice: newExpenseItem.price,
+        totalAmount: newExpenseItem.price,
+        branch: newExpenseItem.branch,
+        category: finalCategory,
+        date: newExpenseItem.purchaseDate,
+        timestamp: new Date().toISOString(),
+        userId: user.uid,
+        userName: user.name || user.email,
+        financialImpact: `Expense increased by PHP ${newExpenseItem.price.toFixed(2)}`,
+        notes: `Expense recorded: ${newExpenseItem.name}`
+      });
+
+      setNewExpenseItem({
+        name: '', price: 0, branch: 'elite',
+        customCategory: '', purchaseDate: getLocalDateString()
+      });
+    } catch (error) {
+      alert('Error recording expense: ' + error.message);
     }
   };
 
@@ -1026,7 +1083,7 @@ export default function App() {
         <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-            <p className="text-gray-600">Management System V2.3.3</p>
+            <p className="text-gray-600">Management System V2.4</p>
             <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
           </div>
           <div className="space-y-4">
@@ -1084,148 +1141,26 @@ export default function App() {
   );
 
   const renderInventory = () => {
+    const stockItems = inventory.filter(item => isStockCategory(item.category));
+    const expenseItems = inventory.filter(item => isExpenseCategory(item.category));
+
     return (
       <div className="space-y-6">
         <h2 className="text-2xl font-bold text-gray-800">Inventory & Expenses</h2>
 
-        {canManage && (
-          <div className="bg-white rounded-lg shadow p-6 space-y-4">
-            <h3 className="text-lg font-semibold">Add New Item / Expense</h3>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <select
-                value={newInventoryItem.category}
-                onChange={(e) => setNewInventoryItem({ ...newInventoryItem, category: e.target.value })}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                {EXPENSE_CATEGORIES.map(cat => (
-                  <option key={cat.value} value={cat.value}>{cat.label}</option>
-                ))}
-              </select>
-            </div>
-
-            {newInventoryItem.category === 'misc' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Specify Type</label>
-                <input
-                  type="text"
-                  value={newInventoryItem.customCategory}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, customCategory: e.target.value })}
-                  placeholder="e.g., Electricity, Internet"
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
-                <input
-                  type="text"
-                  placeholder="Item name"
-                  value={newInventoryItem.name}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, name: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
-                <select
-                  value={newInventoryItem.branch}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, branch: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                >
-                  {Object.entries(BRANCHES).map(([key, b]) => (
-                    <option key={key} value={key}>{b.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
-                <input
-                  type="number"
-                  placeholder="Quantity (>0)"
-                  min="1"
-                  value={newInventoryItem.quantity || ''}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, quantity: parseInt(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">* Must be greater than 0 for new items</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price (PHP)</label>
-                <input
-                  type="number"
-                  placeholder="0.00"
-                  value={newInventoryItem.price || ''}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, price: parseFloat(e.target.value) || 0 })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Type</label>
-                <select
-                  value={newInventoryItem.unit}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, unit: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                >
-                  {UNIT_OPTIONS.map(unit => (
-                    <option key={unit} value={unit}>
-                      {unit === 'other' ? 'Other (Custom)...' : unit.charAt(0).toUpperCase() + unit.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {newInventoryItem.unit === 'other' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Custom Unit</label>
-                  <input
-                    type="text"
-                    placeholder="e.g., pairs, rolls"
-                    value={newInventoryItem.customUnit}
-                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, customUnit: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Date</label>
-                <input
-                  type="date"
-                  value={newInventoryItem.purchaseDate}
-                  onChange={(e) => setNewInventoryItem({ ...newInventoryItem, purchaseDate: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={handleAddInventory}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" /> Add Item
-            </button>
-          </div>
-        )}
-
+        {/* Section A: Current Inventory Table */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b flex justify-between items-center">
-            <h3 className="text-lg font-semibold">Current Inventory & Expenses</h3>
-            <span className="text-sm text-gray-500">{inventory.length} items</span>
+          <div className="px-6 py-4 border-b flex justify-between items-center bg-green-50">
+            <h3 className="text-lg font-semibold text-green-900 flex items-center gap-2">
+              <Package className="w-5 h-5" /> Current Inventory
+            </h3>
+            <span className="text-sm text-green-700">{stockItems.length} items</span>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left">Category</th>
                   <th className="px-4 py-3 text-left">Item Name</th>
                   <th className="px-4 py-3 text-left">Qty</th>
                   <th className="px-4 py-3 text-left">Unit</th>
@@ -1236,21 +1171,10 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {inventory.length > 0 ? inventory.map((item) => (
+                {stockItems.length > 0 ? stockItems.map((item) => (
                   <tr key={item.id} className="hover:bg-gray-50">
                     {editingInventory?.originalId === item.id ? (
                       <>
-                        <td className="px-4 py-2">
-                          <select
-                            value={editingInventory.category}
-                            onChange={(e) => setEditingInventory({ ...editingInventory, category: e.target.value })}
-                            className="w-full px-2 py-1 border rounded text-sm"
-                          >
-                            {EXPENSE_CATEGORIES.map(cat => (
-                              <option key={cat.value} value={cat.value}>{cat.label}</option>
-                            ))}
-                          </select>
-                        </td>
                         <td className="px-4 py-2">
                           <input
                             type="text"
@@ -1268,7 +1192,7 @@ export default function App() {
                             className="w-20 px-2 py-1 border rounded text-sm"
                           />
                         </td>
-                        <td className="px-4 py-2 text-gray-500">{BRANCHES[item.branch].name}</td>
+                        <td className="px-4 py-2 text-gray-500">{BRANCHES[item.branch]?.name || item.branch}</td>
                         <td className="px-4 py-2 text-right text-gray-500">PHP {item.price.toFixed(2)}</td>
                         <td className="px-4 py-2 text-right text-gray-500">PHP {(item.quantity * item.price).toFixed(2)}</td>
                         <td className="px-4 py-2">
@@ -1284,23 +1208,12 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs ${item.category === 'inventory' ? 'bg-blue-100 text-blue-800' :
-                              item.category === 'utilities' ? 'bg-yellow-100 text-yellow-800' :
-                                item.category === 'rent' ? 'bg-purple-100 text-purple-800' :
-                                  item.category?.startsWith('misc') ? 'bg-gray-100 text-gray-800' :
-                                    'bg-green-100 text-green-800'
-                            }`}>
-                            {item.category?.startsWith('misc:') ? item.category.replace('misc:', '') :
-                              EXPENSE_CATEGORIES.find(c => c.value === item.category)?.label || item.category}
-                          </span>
-                        </td>
                         <td className="px-4 py-3 font-medium">{item.name}</td>
                         <td className="px-4 py-3">
                           <span className="font-semibold">{item.quantity}</span>
                         </td>
                         <td className="px-4 py-3 text-gray-600">{item.unit}</td>
-                        <td className="px-4 py-3 text-gray-600">{BRANCHES[item.branch].name}</td>
+                        <td className="px-4 py-3 text-gray-600">{BRANCHES[item.branch]?.name || item.branch}</td>
                         <td className="px-4 py-3 text-right">PHP {item.price.toFixed(2)}</td>
                         <td className="px-4 py-3 text-right font-medium">PHP {(item.quantity * item.price).toFixed(2)}</td>
                         {canManage && (
@@ -1343,19 +1256,270 @@ export default function App() {
                   </tr>
                 )) : (
                   <tr>
-                    <td colSpan={canManage ? 8 : 7} className="px-4 py-8 text-center text-gray-500">
-                      No inventory or expenses recorded
+                    <td colSpan={canManage ? 7 : 6} className="px-4 py-8 text-center text-gray-500">
+                      No inventory items recorded
                     </td>
                   </tr>
                 )}
               </tbody>
-              {inventory.length > 0 && (
-                <tfoot className="bg-gray-50 font-semibold">
+              {stockItems.length > 0 && (
+                <tfoot className="bg-green-50 font-semibold">
                   <tr>
-                    <td colSpan={6} className="px-4 py-3 text-right">Grand Total:</td>
-                    <td className="px-4 py-3 text-right">
-                      PHP {inventory.reduce((sum, i) => sum + (i.quantity * i.price), 0).toFixed(2)}
+                    <td colSpan={5} className="px-4 py-3 text-right text-green-900">Inventory Total:</td>
+                    <td className="px-4 py-3 text-right text-green-900">
+                      PHP {stockItems.reduce((sum, i) => sum + (i.quantity * i.price), 0).toFixed(2)}
                     </td>
+                    {canManage && <td></td>}
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+
+        {/* Section B: Two Input Forms (side-by-side on desktop) */}
+        {canManage && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Form 1: Record Purchase / Stock In */}
+            <div className="bg-white rounded-lg shadow p-6 space-y-4 border-t-4 border-green-500">
+              <h3 className="text-lg font-semibold text-green-800 flex items-center gap-2">
+                <Package className="w-5 h-5" /> Record Purchase / Stock In
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Item Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Shampoo, Razor Blades"
+                    value={newInventoryItem.name}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, name: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+                  <input
+                    type="number"
+                    placeholder="Quantity (>0)"
+                    min="1"
+                    value={newInventoryItem.quantity || ''}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, quantity: parseInt(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unit Price (PHP)</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={newInventoryItem.price || ''}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Unit Type</label>
+                  <select
+                    value={newInventoryItem.unit}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, unit: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  >
+                    {UNIT_OPTIONS.map(unit => (
+                      <option key={unit} value={unit}>
+                        {unit === 'other' ? 'Other (Custom)...' : unit.charAt(0).toUpperCase() + unit.slice(1)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {newInventoryItem.unit === 'other' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Custom Unit</label>
+                    <input
+                      type="text"
+                      placeholder="e.g., pairs, rolls"
+                      value={newInventoryItem.customUnit}
+                      onChange={(e) => setNewInventoryItem({ ...newInventoryItem, customUnit: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-lg"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+                  <select
+                    value={newInventoryItem.branch}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, branch: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  >
+                    {Object.entries(BRANCHES).map(([key, b]) => (
+                      <option key={key} value={key}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Purchase Date</label>
+                  <input
+                    type="date"
+                    value={newInventoryItem.purchaseDate}
+                    onChange={(e) => setNewInventoryItem({ ...newInventoryItem, purchaseDate: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddStock}
+                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" /> Add Stock
+              </button>
+            </div>
+
+            {/* Form 2: Record Bill / Expense */}
+            <div className="bg-white rounded-lg shadow p-6 space-y-4 border-t-4 border-orange-500">
+              <h3 className="text-lg font-semibold text-orange-800 flex items-center gap-2">
+                <DollarSign className="w-5 h-5" /> Record Bill / Expense
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Expense Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Electric Bill, Internet"
+                    value={newExpenseItem.name}
+                    onChange={(e) => setNewExpenseItem({ ...newExpenseItem, name: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount (PHP)</label>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={newExpenseItem.price || ''}
+                    onChange={(e) => setNewExpenseItem({ ...newExpenseItem, price: parseFloat(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Type (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g., Electricity, Rent, Internet"
+                    value={newExpenseItem.customCategory}
+                    onChange={(e) => setNewExpenseItem({ ...newExpenseItem, customCategory: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Branch</label>
+                  <select
+                    value={newExpenseItem.branch}
+                    onChange={(e) => setNewExpenseItem({ ...newExpenseItem, branch: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  >
+                    {Object.entries(BRANCHES).map(([key, b]) => (
+                      <option key={key} value={key}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={newExpenseItem.purchaseDate}
+                    onChange={(e) => setNewExpenseItem({ ...newExpenseItem, purchaseDate: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={handleAddExpense}
+                className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 flex items-center gap-2"
+              >
+                <DollarSign className="w-4 h-4" /> Record Expense
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Section C: Recorded Expenses Table */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b flex justify-between items-center bg-orange-50">
+            <h3 className="text-lg font-semibold text-orange-900 flex items-center gap-2">
+              <DollarSign className="w-5 h-5" /> Recorded Expenses
+            </h3>
+            <span className="text-sm text-orange-700">{expenseItems.length} records</span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left">Date</th>
+                  <th className="px-4 py-3 text-left">Expense Name</th>
+                  <th className="px-4 py-3 text-right">Amount</th>
+                  <th className="px-4 py-3 text-left">Branch</th>
+                  {canManage && <th className="px-4 py-3 text-center">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {expenseItems.length > 0 ? expenseItems.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-gray-600">{item.purchaseDate || '-'}</td>
+                    <td className="px-4 py-3 font-medium">
+                      {item.name}
+                      {item.category?.startsWith('misc:') && (
+                        <span className="text-xs text-gray-500 ml-2">({item.category.replace('misc: ', '').replace('misc:', '')})</span>
+                      )}
+                      {(item.category === 'utilities' || item.category === 'rent') && (
+                        <span className="text-xs text-gray-500 ml-2">({item.category === 'utilities' ? 'Utilities' : 'Rent'})</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium">PHP {(item.quantity * item.price).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-gray-600">{BRANCHES[item.branch]?.name || item.branch}</td>
+                    {canManage && (
+                      <td className="px-4 py-3">
+                        <div className="flex justify-center">
+                          <button
+                            onClick={() => handleDeleteInventory(item.id)}
+                            className="p-1 bg-red-100 text-red-700 rounded hover:bg-red-200"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan={canManage ? 5 : 4} className="px-4 py-8 text-center text-gray-500">
+                      No expenses recorded
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {expenseItems.length > 0 && (
+                <tfoot className="bg-orange-50 font-semibold">
+                  <tr>
+                    <td colSpan={2} className="px-4 py-3 text-right text-orange-900">Expenses Total:</td>
+                    <td className="px-4 py-3 text-right text-orange-900">
+                      PHP {expenseItems.reduce((sum, i) => sum + (i.quantity * i.price), 0).toFixed(2)}
+                    </td>
+                    <td></td>
                     {canManage && <td></td>}
                   </tr>
                 </tfoot>
@@ -2219,7 +2383,7 @@ export default function App() {
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.3.3 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.4 ● Cloud</span>
             </div>
             <button
               onClick={async () => {

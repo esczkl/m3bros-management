@@ -118,10 +118,11 @@ export const PAYMENT_MODES = ['Cash', 'GCash', 'BDO', 'BPI', 'PayMaya'];
 
 export const EXPENSE_CATEGORIES = [
   { value: 'inventory', label: 'Inventory/Supplies' },
-  { value: 'utilities', label: 'Utilities (Electricity/Water)' },
-  { value: 'rent', label: 'Rent/Lease' },
-  { value: 'equipment', label: 'Equipment/Tools' },
   { value: 'misc', label: 'Miscellaneous' }
 ];
+
+// Backward-compatible category helpers
+export const isStockCategory = (cat) => cat === 'inventory' || cat === 'equipment';
+export const isExpenseCategory = (cat) => cat === 'utilities' || cat === 'rent' || (cat && cat.startsWith('misc'));
 
 export const UNIT_OPTIONS = ['pcs', 'bottles', 'boxes', 'liters', 'packs', 'sachets', 'sheets', 'sets', 'other'];
