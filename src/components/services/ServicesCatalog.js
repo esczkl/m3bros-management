@@ -3,7 +3,7 @@ import { Scissors, Plus, Edit2, Save, X, Trash2, RotateCcw, Search } from 'lucid
 import { addDoc, updateDoc, collection, doc, writeBatch } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { BRANCHES } from '../../config/constants';
-import { getServiceTypes, seedServicesFromConstants } from '../../utils/services';
+import { getServiceTypes, seedServicesFromConstants, isValidService } from '../../utils/services';
 import { useAuthContext, useDataContext, useToast } from '../../contexts';
 
 const clean = (str) => (str || '').trim().replace(/\s+/g, ' ');
@@ -11,7 +11,10 @@ const emptyForm = (type) => ({ type, category: '', name: '', price: '', descript
 
 export function ServicesCatalog() {
   const { user, canManageServices } = useAuthContext();
-  const { servicesList, servicesLoaded } = useDataContext();
+  const { servicesList: rawServices, servicesLoaded } = useDataContext();
+  // Ignore incomplete records so they can neither crash the page nor block the migration.
+  const servicesList = rawServices.filter(isValidService);
+  const invalidCount = rawServices.length - servicesList.length;
   const toast = useToast();
 
   const [branchKey, setBranchKey] = useState('elite');
@@ -183,6 +186,12 @@ export function ServicesCatalog() {
             <button onClick={() => setShowAdd(false)} className="px-4 py-2 bg-gray-200 rounded-lg">Cancel</button>
           </div>
         </div>
+      )}
+
+      {invalidCount > 0 && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+          {invalidCount} incomplete service record{invalidCount !== 1 ? 's are' : ' is'} being ignored (missing name, type, category or branch).
+        </p>
       )}
 
       {!ready ? (

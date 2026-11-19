@@ -3,12 +3,13 @@ import { Users, UserPlus, UserMinus, RotateCcw } from 'lucide-react';
 import { addDoc, updateDoc, collection, doc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { BRANCHES } from '../../config/constants';
-import { seedStaffFromConstants } from '../../utils/staff';
+import { seedStaffFromConstants, isValidStaff } from '../../utils/staff';
 import { useAuthContext, useDataContext, useToast } from '../../contexts';
 
 export function StaffManager() {
   const { user, canManageStaff } = useAuthContext();
-  const { staffList, staffLoaded } = useDataContext();
+  const { staffList: rawStaff, staffLoaded } = useDataContext();
+  const staffList = rawStaff.filter(isValidStaff);
   const toast = useToast();
 
   const [branchKey, setBranchKey] = useState('elite');

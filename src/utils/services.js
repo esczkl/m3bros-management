@@ -8,11 +8,16 @@ export const getServiceTypes = (branchKey) => Object.keys(BRANCHES[branchKey]?.s
 // Returns services for a branch in the original nested shape:
 // { Barber: { 'Haircut Men and Women': [{ name, price, description }] } }
 // Falls back to the hard-coded catalog until the services collection has been seeded.
+// A record is only usable if it has every field the forms need; anything else is ignored.
+export const isValidService = (s) => !!(s && s.branch && s.type && s.category && s.name);
+
 export const getBranchServices = (servicesList, branchKey) => {
-  if (!servicesList || servicesList.length === 0) return BRANCHES[branchKey]?.services || {};
+  const branchDocs = (servicesList || []).filter(s => isValidService(s) && s.branch === branchKey);
+  // Not migrated yet (or only incomplete records): keep using the hard-coded catalog.
+  if (branchDocs.length === 0) return BRANCHES[branchKey]?.services || {};
   const grouped = {};
-  servicesList
-    .filter(s => s.branch === branchKey && s.active !== false && s.type && s.category && s.name)
+  branchDocs
+    .filter(s => s.active !== false)
     .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0) || String(a.name).localeCompare(String(b.name)))
     .forEach(s => {
       if (!grouped[s.type]) grouped[s.type] = {};

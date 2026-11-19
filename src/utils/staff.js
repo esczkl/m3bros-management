@@ -8,11 +8,15 @@ export const seedStaffId = (branch, type, name) => `${branch}__${type}__${name}`
 
 // Returns staff for a branch grouped by service type: { Barber: ['Lito', ...], Salon: [...] }
 // Falls back to the hard-coded list in constants until the staff collection has been seeded.
+export const isValidStaff = (s) => !!(s && s.branch && s.type && s.name);
+
 export const getBranchStaff = (staffList, branchKey) => {
-  if (!staffList || staffList.length === 0) return BRANCHES[branchKey]?.staff || {};
+  const branchDocs = (staffList || []).filter(s => isValidStaff(s) && s.branch === branchKey);
+  // Not migrated yet (or only incomplete records): keep using the hard-coded list.
+  if (branchDocs.length === 0) return BRANCHES[branchKey]?.staff || {};
   const grouped = {};
-  staffList
-    .filter(s => s.branch === branchKey && s.active !== false && s.type && s.name)
+  branchDocs
+    .filter(s => s.active !== false)
     .sort((a, b) => String(a.name).localeCompare(String(b.name)))
     .forEach(s => {
       if (!grouped[s.type]) grouped[s.type] = [];
