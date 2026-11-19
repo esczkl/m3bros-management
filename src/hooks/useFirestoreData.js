@@ -8,6 +8,10 @@ export function useFirestoreData(user) {
   const [inventoryLogs, setInventoryLogs] = useState([]);
   const [attendance, setAttendance] = useState([]);
   const [usersList, setUsersList] = useState([]);
+  const [staffList, setStaffList] = useState([]);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+  const [servicesList, setServicesList] = useState([]);
+  const [servicesLoaded, setServicesLoaded] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -16,6 +20,10 @@ export function useFirestoreData(user) {
       setInventoryLogs([]);
       setAttendance([]);
       setUsersList([]);
+      setStaffList([]);
+      setStaffLoaded(false);
+      setServicesList([]);
+      setServicesLoaded(false);
       return;
     }
 
@@ -49,7 +57,19 @@ export function useFirestoreData(user) {
       setUsersList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
     });
 
+    const unsubStaff = onSnapshot(collection(db, 'staff'), (snapshot) => {
+      setStaffList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setStaffLoaded(true);
+    });
+
+    const unsubServices = onSnapshot(collection(db, 'services'), (snapshot) => {
+      setServicesList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setServicesLoaded(true);
+    });
+
     return () => {
+      unsubServices();
+      unsubStaff();
       unsubTxs();
       unsubInv();
       unsubInvLogs();
@@ -63,6 +83,10 @@ export function useFirestoreData(user) {
     inventory,
     inventoryLogs,
     attendance,
-    usersList
+    usersList,
+    staffList,
+    staffLoaded,
+    servicesList,
+    servicesLoaded
   };
 }

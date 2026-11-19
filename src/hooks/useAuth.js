@@ -48,6 +48,8 @@ export function useAuth() {
 
   const canManage = userRole === 'admin' || userRole === 'manager';
   const isAdmin = userRole === 'admin';
+  const canManageStaff = ['admin', 'manager', 'owner'].includes(userRole);
+  const canManageServices = canManageStaff;
 
   return {
     user,
@@ -55,6 +57,8 @@ export function useAuth() {
     loading,
     canManage,
     isAdmin,
+    canManageStaff,
+    canManageServices,
     handleLogin,
     handleLogout
   };

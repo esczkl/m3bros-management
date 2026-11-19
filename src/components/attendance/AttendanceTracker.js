@@ -1,22 +1,29 @@
 import React, { useState } from 'react';
 import { UserCheck } from 'lucide-react';
 import { BRANCHES } from '../../config/constants';
-import { getCalendarDays, getMonthName } from '../../utils/helpers';
+import { getCalendarDays, getMonthName, getLocalDateString } from '../../utils/helpers';
+import { getBranchStaff } from '../../utils/staff';
 import { addDoc, deleteDoc, collection, doc } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { useAuthContext, useDataContext, useToast } from '../../contexts';
 
-export function AttendanceTracker({ attendance, user, canManage }) {
+export function AttendanceTracker() {
+  const { user, canManage } = useAuthContext();
+  const { attendance, staffList } = useDataContext();
+  const toast = useToast();
+
   const [attendanceTimeframe, setAttendanceTimeframe] = useState('daily');
   const [calendarMonth, setCalendarMonth] = useState({
     year: new Date().getFullYear(),
     month: new Date().getMonth()
   });
   const [newAttendance, setNewAttendance] = useState({
-    staff: 'Lito', // Default
+    staff: 'Lito',
     branch: 'elite',
     status: 'present',
-    date: new Date().toISOString().split('T')[0]
+    date: getLocalDateString()
   });
+  const [customAttendanceStaff, setCustomAttendanceStaff] = useState('');
 
   const navigateMonth = (dir) => {
     setCalendarMonth(prev => {
@@ -29,62 +36,50 @@ export function AttendanceTracker({ attendance, user, canManage }) {
   };
 
   const handleAddAttendance = async () => {
-    if (!canManage) {
-      alert('Permission denied');
-      return;
-    }
-    if (!newAttendance.staff) {
-      alert('Please select a staff member');
-      return;
-    }
-    const exists = attendance.find(a => a.staff === newAttendance.staff && a.date === newAttendance.date);
-    if (exists) {
-      alert('This staff member already has an attendance entry for this date');
-      return;
-    }
+    if (!canManage) { toast.error('Permission denied'); return; }
+    const staffName = newAttendance.staff === 'other' ? customAttendanceStaff.trim() : newAttendance.staff;
+    if (!staffName) { toast.warn('Please select or enter a staff member'); return; }
+    const exists = attendance.find(a => a.staff === staffName && a.date === newAttendance.date);
+    if (exists) { toast.warn('This staff member already has an attendance entry for this date'); return; }
 
     try {
       await addDoc(collection(db, 'attendance'), {
         ...newAttendance,
+        staff: staffName,
         timestamp: new Date().toISOString(),
         createdBy: user.uid
       });
       setNewAttendance({
-        staff: newAttendance.staff, // Keep same staff for ease
+        staff: newAttendance.staff === 'other' ? 'other' : staffName,
         branch: newAttendance.branch,
         status: 'present',
-        date: new Date().toISOString().split('T')[0]
+        date: getLocalDateString()
       });
-    } catch (error) {
-      alert('Error logging attendance: ' + error.message);
-    }
+      if (newAttendance.staff === 'other') setCustomAttendanceStaff('');
+      toast.success('Attendance logged!');
+    } catch (error) { toast.error('Error logging attendance: ' + error.message); }
   };
 
   const handleDeleteAttendance = async (id) => {
-    if (!canManage) {
-      alert('Permission denied');
-      return;
-    }
+    if (!canManage) { toast.error('Permission denied'); return; }
     if (window.confirm('Remove this attendance record?')) {
       try {
         await deleteDoc(doc(db, 'attendance', id));
-      } catch (error) {
-        alert('Error removing: ' + error.message);
-      }
+      } catch (error) { toast.error('Error removing: ' + error.message); }
     }
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const { start, end } = attendanceTimeframe === 'daily'
     ? { start: today, end: today }
     : attendanceTimeframe === 'weekly'
-      ? { start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today }
-      : { start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: today };
+      ? { start: getLocalDateString(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)), end: today }
+      : { start: getLocalDateString(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)), end: today };
 
   const filtered = attendance.filter(a => a.date >= start && a.date <= end);
   const calendarDays = getCalendarDays(calendarMonth.year, calendarMonth.month);
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString();
   const getAttendanceForDate = (d) => attendance.filter(a => a.date === d);
   const monthPrefix = `${calendarMonth.year}-${String(calendarMonth.month + 1).padStart(2, '0')}`;
 
@@ -100,7 +95,7 @@ export function AttendanceTracker({ attendance, user, canManage }) {
               value={newAttendance.branch}
               onChange={(e) => {
                 const branchKey = e.target.value;
-                const branchStaff = Object.values(BRANCHES[branchKey].staff).flat();
+                const branchStaff = Object.values(getBranchStaff(staffList, branchKey)).flat();
                 setNewAttendance({ ...newAttendance, branch: branchKey, staff: branchStaff[0] || '' });
               }}
               className="px-3 py-2 border rounded-lg"
@@ -111,12 +106,16 @@ export function AttendanceTracker({ attendance, user, canManage }) {
             </select>
             <select
               value={newAttendance.staff}
-              onChange={(e) => setNewAttendance({ ...newAttendance, staff: e.target.value })}
+              onChange={(e) => {
+                setNewAttendance({ ...newAttendance, staff: e.target.value });
+                if (e.target.value !== 'other') setCustomAttendanceStaff('');
+              }}
               className="px-3 py-2 border rounded-lg"
             >
-              {Object.values(BRANCHES[newAttendance.branch].staff).flat().map(s => (
+              {Object.values(getBranchStaff(staffList, newAttendance.branch)).flat().map(s => (
                 <option key={s} value={s}>{s}</option>
               ))}
+              <option value="other">Other</option>
             </select>
             <select
               value={newAttendance.status}
@@ -134,6 +133,19 @@ export function AttendanceTracker({ attendance, user, canManage }) {
               className="px-3 py-2 border rounded-lg"
             />
           </div>
+
+          {newAttendance.staff === 'other' && (
+            <div className="mt-4">
+              <input
+                type="text"
+                value={customAttendanceStaff}
+                onChange={(e) => setCustomAttendanceStaff(e.target.value)}
+                placeholder="Enter staff name"
+                className="w-full md:w-1/3 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
           <button
             onClick={handleAddAttendance}
             className="mt-4 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
@@ -172,7 +184,7 @@ export function AttendanceTracker({ attendance, user, canManage }) {
             </div>
 
             <div className="grid grid-cols-7 gap-1">
-              {dayNames.map(d => <div key={d} className="text-center text-sm font-semibold text-gray-50 py-2">{d}</div>)}
+              {dayNames.map(d => <div key={d} className="text-center text-sm font-semibold text-gray-500 py-2">{d}</div>)}
               {calendarDays.map((dateStr, idx) => {
                 if (!dateStr) return <div key={`e-${idx}`} className="min-h-24 bg-gray-50 rounded"></div>;
                 const dayNum = parseInt(dateStr.split('-')[2]);
@@ -228,7 +240,7 @@ export function AttendanceTracker({ attendance, user, canManage }) {
                 className={`px-4 py-3 rounded-lg text-white cursor-pointer hover:opacity-90 flex justify-between items-center ${a.status === 'present' ? 'bg-green-500' : a.status === 'absent' ? 'bg-red-500' : 'bg-blue-500'}`}
               >
                 <span className="font-medium">{a.staff}</span>
-                <span className="text-sm opacity-90">{a.date} • {BRANCHES[a.branch].name}</span>
+                <span className="text-sm opacity-90">{a.date} • {BRANCHES[a.branch]?.name || a.branch}</span>
               </div>
             )) : (
               <p className="text-center text-gray-500 py-8">No attendance records for this period</p>

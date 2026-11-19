@@ -1,3 +1,11 @@
+// Timezone-safe local date string (YYYY-MM-DD)
+export const getLocalDateString = (date = new Date()) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export const getMonthName = (m) => {
     return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m];
 };
@@ -18,18 +26,18 @@ export const getCalendarDays = (year, month) => {
 // Start of month (YYYY-MM-01)
 export const getStartOfMonth = () => {
     const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+    return getLocalDateString(new Date(today.getFullYear(), today.getMonth(), 1));
 };
 
 // Today (YYYY-MM-DD)
 export const getTodayDate = () => {
-    return new Date().toISOString().split('T')[0];
+    return getLocalDateString();
 };
 
 // End of month (YYYY-MM-DD)
 export const getEndOfMonth = () => {
     const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0];
+    return getLocalDateString(new Date(today.getFullYear(), today.getMonth() + 1, 0));
 };
 
 export const calculateCuts = (serviceType, price) => {

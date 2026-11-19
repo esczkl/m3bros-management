@@ -42,7 +42,9 @@ export const BRANCHES = {
         'Package': [
           { name: '1 Facial and Hair Treatment', price: 2200 },
           { name: '2 Scalp Treatment and Facial and Hair Cut', price: 1600 },
-          { name: '3 Facial and Hair Cut and Shave', price: 1750 }
+          { name: '3 Facial and Hair Cut and Shave', price: 1750 },
+          { name: '4 HC/Shave', price: 550 },
+          { name: '5 Headshave / Beardtrim', price: 550 }
         ]
       },
       Salon: {
@@ -62,7 +64,10 @@ export const BRANCHES = {
           { name: 'Gel Manicure', price: 450 },
           { name: 'Gel Pedicure', price: 500 },
           { name: 'Nail Extension', price: 999 },
-          { name: 'Soft Gel', price: 250 }
+          { name: 'Soft Gel', price: 250 },
+          { name: 'Footspa/Pedi', price: 450 },
+          { name: 'Gel Remove', price: 150 },
+          { name: 'Mani/Pedi', price: 275 }
         ],
         'Waxing': [
           { name: 'Under Arms', price: 250 },
@@ -99,7 +104,7 @@ export const BRANCHES = {
         'Haircut Men and Women': [{ name: 'Hair Cut', price: 180 }]
       }
     },
-    staff: { Barber: ['Joseph', 'Rowel', 'Jared', 'Rommel'] }
+    staff: { Barber: ['Joseph', 'Rowel', 'Jared', 'Rommel', 'AJ', 'Orly'] }
   },
   typeC: {
     name: 'M3 Bros Type C Branch',

@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
+import { useAuthContext } from '../../contexts';
+import { useToast } from '../../contexts';
 
-export function Login({ onLogin }) {
+export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const { handleLogin } = useAuthContext();
+  const toast = useToast();
 
-  const handleLogin = async () => {
+  const onLogin = async () => {
     try {
-      await onLogin(email, password);
+      await handleLogin(email, password);
     } catch (error) {
-      alert('Invalid credentials: ' + error.message);
+      toast.error('Invalid credentials: ' + error.message);
     }
   };
 
@@ -17,7 +21,7 @@ export function Login({ onLogin }) {
       <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">M3 Bros</h1>
-          <p className="text-gray-600">Management System V2.3</p>
+          <p className="text-gray-600">Management System V2.5</p>
           <p className="text-xs text-green-600 mt-2">● Secure Cloud Connection</p>
         </div>
         <div className="space-y-4">
@@ -27,7 +31,7 @@ export function Login({ onLogin }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+              onKeyPress={(e) => e.key === 'Enter' && onLogin()}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="admin@m3bros.com"
             />
@@ -38,14 +42,14 @@ export function Login({ onLogin }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+              onKeyPress={(e) => e.key === 'Enter' && onLogin()}
               autoComplete="new-password"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               placeholder="Enter password"
             />
           </div>
           <button
-            onClick={handleLogin}
+            onClick={onLogin}
             className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
           >
             Login

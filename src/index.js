@@ -3,13 +3,18 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-
-// [CHECKPOINT V1.0] - Application Entry Point
+import { AuthProvider, DataProvider, ToastProvider } from './contexts';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <App />
+    <AuthProvider>
+      <DataProvider>
+        <ToastProvider>
+          <App />
+        </ToastProvider>
+      </DataProvider>
+    </AuthProvider>
   </React.StrictMode>
 );
 

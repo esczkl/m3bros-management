@@ -1,10 +1,10 @@
 import React from 'react';
-import { LogOut, Package, UserCheck, Shield, Plus } from 'lucide-react';
+import { LogOut, Package, UserCheck, Shield, Users, Scissors } from 'lucide-react';
 import { BRANCHES } from '../../config/constants';
+import { useAuthContext } from '../../contexts';
 
-export function Navbar({ user, userRole, currentView, setCurrentView, onLogout }) {
-  const canManage = userRole === 'admin' || userRole === 'manager';
-  const isAdmin = userRole === 'admin';
+export function Navbar({ currentView, setCurrentView }) {
+  const { user, userRole, canManage, canManageStaff, canManageServices, isAdmin, handleLogout } = useAuthContext();
 
   return (
     <>
@@ -24,10 +24,10 @@ export function Navbar({ user, userRole, currentView, setCurrentView, onLogout }
                 }`}>
                 {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Manager' : 'Owner'}
               </span>
-              <span className="text-xs text-gray-500">v2.3 ● Cloud</span>
+              <span className="text-xs text-gray-500">v2.5 ● Cloud</span>
             </div>
             <button
-              onClick={onLogout}
+              onClick={handleLogout}
               className="flex items-center gap-2 text-gray-700 hover:text-gray-900"
             >
               <LogOut className="w-5 h-5" />
@@ -56,16 +56,26 @@ export function Navbar({ user, userRole, currentView, setCurrentView, onLogout }
                 + Transaction
               </button>
 
-              {/* Updated Color: Amber for Inventory */}
               <button onClick={() => setCurrentView('inventory')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'inventory' ? 'bg-amber-600 text-white' : 'bg-white hover:bg-gray-50 text-amber-700 border border-amber-200'}`}>
                 <Package className="w-4 h-4" /> Inventory
               </button>
 
-              {/* Updated Color: Indigo for Attendance */}
               <button onClick={() => setCurrentView('attendance')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'attendance' ? 'bg-indigo-600 text-white' : 'bg-white hover:bg-gray-50 text-indigo-700 border border-indigo-200'}`}>
                 <UserCheck className="w-4 h-4" /> Attendance
               </button>
             </>
+          )}
+
+          {canManageStaff && (
+            <button onClick={() => setCurrentView('staff')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'staff' ? 'bg-teal-600 text-white' : 'bg-white hover:bg-gray-50 text-teal-700 border border-teal-200'}`}>
+              <Users className="w-4 h-4" /> Staff
+            </button>
+          )}
+
+          {canManageServices && (
+            <button onClick={() => setCurrentView('services')} className={`px-4 py-2 rounded-lg text-sm whitespace-nowrap flex items-center gap-2 ${currentView === 'services' ? 'bg-pink-600 text-white' : 'bg-white hover:bg-gray-50 text-pink-700 border border-pink-200'}`}>
+              <Scissors className="w-4 h-4" /> Services
+            </button>
           )}
 
           {isAdmin && (

@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { BRANCHES, PAYMENT_MODES } from '../../config/constants';
-import { calculateCuts } from '../../utils/helpers';
+import { calculateCuts, getLocalDateString } from '../../utils/helpers';
+import { getBranchStaff } from '../../utils/staff';
+import { getBranchServices } from '../../utils/services';
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { useAuthContext, useDataContext, useToast } from '../../contexts';
 
-export function TransactionForm({ user, userRole }) {
+export function TransactionForm() {
+  const { user, userRole } = useAuthContext();
+  const { staffList, servicesList } = useDataContext();
+  const catalogFor = (branchKey) => getBranchServices(servicesList, branchKey);
+  const toast = useToast();
   const [customStaff, setCustomStaff] = useState('');
   const [newTransaction, setNewTransaction] = useState({
     branch: 'elite',
@@ -17,12 +24,11 @@ export function TransactionForm({ user, userRole }) {
     managementCut: 0,
     staffCut: 0,
     paymentMode: 'Cash',
-    date: new Date().toISOString().split('T')[0] // Default to today
+    date: getLocalDateString()
   });
 
   const handleServiceTypeChange = (value) => {
-    const branch = BRANCHES[newTransaction.branch];
-    const categories = Object.keys(branch.services[value] || {});
+    const categories = Object.keys(catalogFor(newTransaction.branch)[value] || {});
     setNewTransaction({
       ...newTransaction,
       serviceType: value,
@@ -48,8 +54,7 @@ export function TransactionForm({ user, userRole }) {
   };
 
   const handleServiceChange = (value) => {
-    const branch = BRANCHES[newTransaction.branch];
-    const serviceObj = branch.services[newTransaction.serviceType]?.[newTransaction.category]?.find(s => s.name === value);
+    const serviceObj = catalogFor(newTransaction.branch)[newTransaction.serviceType]?.[newTransaction.category]?.find(s => s.name === value);
     const price = serviceObj?.price || 0;
     const cuts = calculateCuts(newTransaction.serviceType, price);
     setNewTransaction({
@@ -75,7 +80,13 @@ export function TransactionForm({ user, userRole }) {
   const handleAddTransaction = async () => {
     const staffName = newTransaction.staff === 'freelancer' ? customStaff.trim() : newTransaction.staff;
     if (!newTransaction.service || !staffName) {
-      alert('Please fill in all fields including staff selection');
+      toast.warn('Please fill in all fields including staff selection');
+      return;
+    }
+
+    const todayStr = getLocalDateString();
+    if (newTransaction.date > todayStr) {
+      toast.warn('Transaction date cannot be in the future');
       return;
     }
 
@@ -87,8 +98,7 @@ export function TransactionForm({ user, userRole }) {
         createdBy: user.uid
       });
 
-      const branch = BRANCHES[newTransaction.branch];
-      const categories = Object.keys(branch.services[newTransaction.serviceType] || {});
+      const categories = Object.keys(catalogFor(newTransaction.branch)[newTransaction.serviceType] || {});
       setNewTransaction({
         branch: newTransaction.branch,
         serviceType: newTransaction.serviceType,
@@ -99,20 +109,21 @@ export function TransactionForm({ user, userRole }) {
         managementCut: 0,
         staffCut: 0,
         paymentMode: 'Cash',
-        date: new Date().toISOString().split('T')[0]
+        date: getLocalDateString()
       });
       setCustomStaff('');
-      alert('Transaction added successfully!');
+      toast.success('Transaction added successfully!');
     } catch (error) {
-      alert('Error saving transaction: ' + error.message);
+      toast.error('Error saving transaction: ' + error.message);
     }
   };
 
-  const branch = BRANCHES[newTransaction.branch];
-  const serviceTypes = Object.keys(branch.services);
-  const categories = newTransaction.serviceType ? Object.keys(branch.services[newTransaction.serviceType] || {}) : [];
-  const services = newTransaction.category ? branch.services[newTransaction.serviceType]?.[newTransaction.category] || [] : [];
-  const staff = branch.staff[newTransaction.serviceType] || [];
+  const catalog = catalogFor(newTransaction.branch);
+  const serviceTypes = Object.keys(catalog);
+  const categories = newTransaction.serviceType ? Object.keys(catalog[newTransaction.serviceType] || {}) : [];
+  const services = newTransaction.category ? catalog[newTransaction.serviceType]?.[newTransaction.category] || [] : [];
+  const selectedService = services.find(s => s.name === newTransaction.service);
+  const staff = getBranchStaff(staffList, newTransaction.branch)[newTransaction.serviceType] || [];
 
   return (
     <div className="space-y-6">
@@ -126,9 +137,9 @@ export function TransactionForm({ user, userRole }) {
               value={newTransaction.branch}
               onChange={(e) => {
                 const branchKey = e.target.value;
-                const newBranch = BRANCHES[branchKey];
-                const sTypes = Object.keys(newBranch.services);
-                const cats = Object.keys(newBranch.services[sTypes[0]] || {});
+                const newCatalog = catalogFor(branchKey);
+                const sTypes = Object.keys(newCatalog);
+                const cats = Object.keys(newCatalog[sTypes[0]] || {});
                 setNewTransaction({
                   ...newTransaction,
                   branch: branchKey,
@@ -191,6 +202,9 @@ export function TransactionForm({ user, userRole }) {
               <option value="">Select Service...</option>
               {services.map(s => <option key={s.name} value={s.name}>{s.name} - PHP {s.price}</option>)}
             </select>
+            {selectedService?.description && (
+              <p className="text-xs text-gray-500 mt-1">{selectedService.description}</p>
+            )}
           </div>
 
           <div>
@@ -208,17 +222,6 @@ export function TransactionForm({ user, userRole }) {
               <option value="freelancer">Other (Freelancer)</option>
             </select>
           </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-            <input
-              type="date"
-              value={newTransaction.date}
-              onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })}
-              className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
         </div>
 
         {newTransaction.staff === 'freelancer' && (
@@ -255,6 +258,22 @@ export function TransactionForm({ user, userRole }) {
             <label className="block text-sm font-medium text-gray-700 mb-1">Staff Cut</label>
             <input type="text" value={`PHP ${newTransaction.staffCut.toFixed(2)}`} readOnly className="w-full px-3 py-2 border rounded-lg bg-gray-100" />
           </div>
+        </div>
+
+        <div className="md:w-1/3">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Transaction Date
+          </label>
+          <input
+            type="date"
+            value={newTransaction.date}
+            max={getLocalDateString()}
+            onChange={(e) => setNewTransaction({ ...newTransaction, date: e.target.value })}
+            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Select the date this transaction occurred
+          </p>
         </div>
 
         <button
