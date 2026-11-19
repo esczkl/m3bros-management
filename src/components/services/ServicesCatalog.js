@@ -45,7 +45,7 @@ export function ServicesCatalog() {
     const g = {};
     active
       .filter(s => !q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q) || (s.description || '').toLowerCase().includes(q))
-      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name))
+      .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0) || String(a.name || '').localeCompare(String(b.name || '')))
       .forEach(s => { (g[s.category] = g[s.category] || []).push(s); });
     return g;
   }, [active, search]);
@@ -253,7 +253,7 @@ export function ServicesCatalog() {
           </button>
           {showDeleted && (
             <ul className="divide-y border-t">
-              {deleted.sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+              {deleted.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))).map(s => (
                 <li key={s.id} className="px-6 py-3 flex justify-between items-center text-gray-500">
                   <span>{s.name} <span className="text-xs">({s.category} · PHP {s.price})</span></span>
                   <button onClick={() => setActive(s, true)} className="text-pink-600 hover:text-pink-800 flex items-center gap-1 text-sm">

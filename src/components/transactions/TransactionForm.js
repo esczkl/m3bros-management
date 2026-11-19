@@ -252,11 +252,11 @@ export function TransactionForm() {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Management Cut</label>
-            <input type="text" value={`PHP ${newTransaction.managementCut.toFixed(2)}`} readOnly className="w-full px-3 py-2 border rounded-lg bg-gray-100" />
+            <input type="text" value={`PHP ${(Number(newTransaction.managementCut) || 0).toFixed(2)}`} readOnly className="w-full px-3 py-2 border rounded-lg bg-gray-100" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Staff Cut</label>
-            <input type="text" value={`PHP ${newTransaction.staffCut.toFixed(2)}`} readOnly className="w-full px-3 py-2 border rounded-lg bg-gray-100" />
+            <input type="text" value={`PHP ${(Number(newTransaction.staffCut) || 0).toFixed(2)}`} readOnly className="w-full px-3 py-2 border rounded-lg bg-gray-100" />
           </div>
         </div>
 

@@ -30,7 +30,7 @@ export function StaffManager() {
   const branchStaff = staffList.filter(s => s.branch === branchKey);
   const active = branchStaff.filter(s => s.active !== false);
   const removed = branchStaff.filter(s => s.active === false);
-  const byName = (a, b) => a.name.localeCompare(b.name);
+  const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
 
   const changeBranch = (key) => {
     setBranchKey(key);

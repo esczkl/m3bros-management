@@ -12,12 +12,12 @@ export const getBranchServices = (servicesList, branchKey) => {
   if (!servicesList || servicesList.length === 0) return BRANCHES[branchKey]?.services || {};
   const grouped = {};
   servicesList
-    .filter(s => s.branch === branchKey && s.active !== false)
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name))
+    .filter(s => s.branch === branchKey && s.active !== false && s.type && s.category && s.name)
+    .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0) || String(a.name).localeCompare(String(b.name)))
     .forEach(s => {
       if (!grouped[s.type]) grouped[s.type] = {};
       if (!grouped[s.type][s.category]) grouped[s.type][s.category] = [];
-      grouped[s.type][s.category].push({ id: s.id, name: s.name, price: s.price, description: s.description || '' });
+      grouped[s.type][s.category].push({ id: s.id, name: String(s.name), price: Number(s.price) || 0, description: s.description || '' });
     });
   return grouped;
 };

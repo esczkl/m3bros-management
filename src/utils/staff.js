@@ -12,8 +12,8 @@ export const getBranchStaff = (staffList, branchKey) => {
   if (!staffList || staffList.length === 0) return BRANCHES[branchKey]?.staff || {};
   const grouped = {};
   staffList
-    .filter(s => s.branch === branchKey && s.active !== false)
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter(s => s.branch === branchKey && s.active !== false && s.type && s.name)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
     .forEach(s => {
       if (!grouped[s.type]) grouped[s.type] = [];
       grouped[s.type].push(s.name);

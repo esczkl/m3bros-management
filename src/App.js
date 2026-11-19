@@ -9,6 +9,7 @@ import { AttendanceTracker } from './components/attendance/AttendanceTracker';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { StaffManager } from './components/staff/StaffManager';
 import { ServicesCatalog } from './components/services/ServicesCatalog';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
   const { user, loading, canManage, canManageStaff, canManageServices, isAdmin } = useAuthContext();
@@ -43,7 +44,7 @@ export default function App() {
     <div className="min-h-screen bg-gray-100">
       <Navbar currentView={currentView} setCurrentView={setCurrentView} />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {renderView()}
+        <ErrorBoundary key={currentView}>{renderView()}</ErrorBoundary>
       </div>
     </div>
   );
